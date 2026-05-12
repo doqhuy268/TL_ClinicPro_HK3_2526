@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+.webpack/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+*.log
+
+# Prisma - drug data (quá lớn)
+prisma/Data/drugs/
+
+# Lock files (optional)
+package-lock.json
+
+# Misc
+*.tsbuildinfo
+coverage/
+.turbo
+
+# Backup & scripts
+rename_script.ps1
+rename_v2.ps1
+revita-fe-main (backup)/
+*.docx
+~$*
