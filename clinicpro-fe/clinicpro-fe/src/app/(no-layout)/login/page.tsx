@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import type React from "react"
 
@@ -244,8 +244,8 @@ export default function LoginPage() {
                   <Heart className="h-5 w-5 text-rose-300" />
                 </div>
                 <div>
-                  <p className="text-white text-sm font-semibold">AI Triage</p>
-                  <p className="text-white/50 text-xs">Phân luồng thông minh</p>
+                  <p className="text-white text-sm font-semibold">AI Chatbot</p>
+                  <p className="text-white/50 text-xs">Tư vấn sức khỏe 24/7</p>
                 </div>
               </div>
               <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm rounded-2xl px-4 py-3">

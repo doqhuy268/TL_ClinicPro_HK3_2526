@@ -12,8 +12,6 @@ import {
 import { AiChatbotService } from './ai-chatbot.service';
 import { DatabaseQueryService } from './database-query.service';
 import { ChatRequestDto, ChatResponseDto } from './dto';
-import { SuggestDiagnosisRequestDto, SuggestDiagnosisResponseDto } from './dto/suggest-diagnosis.dto';
-import { TriageRequestDto, TriageResponseDto } from './dto/triage.dto';
 import { JwtAuthGuard } from '../login/jwt-auth.guard';
 import { Public } from '../rbac/public.decorator';
 
@@ -21,7 +19,6 @@ import { Public } from '../rbac/public.decorator';
  * Controller quản lý các endpoint của Chatbot AI y tế.
  * 
  * Các endpoint chính:
- * - POST /ai-chatbot/triage  → Phân luồng bệnh nhân (Public, dùng trên Kiosk)
  * - POST /ai-chatbot/chat    → Chatbot tư vấn sức khỏe (Yêu cầu đăng nhập)
  * - GET  /ai-chatbot/health-tips → Lời khuyên sức khỏe theo chủ đề
  * - GET  /ai-chatbot/status   → Kiểm tra trạng thái service
@@ -37,21 +34,6 @@ export class AiChatbotController {
   ) {}
 
   /**
-   * [CORE] Phân luồng y tế (AI Triage) — Endpoint chính của đề tài.
-   * Không yêu cầu đăng nhập vì bệnh nhân sử dụng trực tiếp trên Kiosk.
-   * 
-   * Input:  { symptoms: "Tôi bị đau đầu, buồn nôn" }
-   * Output: { suggestedSpecialty: "Nội Thần Kinh", reasoning: "..." }
-   */
-  @Public()
-  @Post('triage')
-  @HttpCode(HttpStatus.OK)
-  async triage(@Body() dto: TriageRequestDto): Promise<TriageResponseDto> {
-    this.logger.log(`AI Triage: "${dto.symptoms.substring(0, 50)}..."`);
-    return this.aiChatbotService.triageSymptoms(dto);
-  }
-
-  /**
    * [CORE] Chatbot tư vấn y tế — Trả lời câu hỏi sức khỏe + tra cứu CSDL.
    * Yêu cầu đăng nhập (JWT) để xác định role và scope dữ liệu.
    */
@@ -60,18 +42,6 @@ export class AiChatbotController {
   async chat(@Body() dto: ChatRequestDto): Promise<ChatResponseDto> {
     this.logger.log(`Chat: "${dto.message.substring(0, 50)}..."`);
     return this.aiChatbotService.generateResponse(dto);
-  }
-
-  /**
-   * Gợi ý chẩn đoán từ ghi chú bệnh án (gọi đến AI Microservice).
-   * Dành cho bác sĩ sử dụng trên giao diện Web.
-   */
-  @Post('suggest-diagnosis')
-  @HttpCode(HttpStatus.OK)
-  async suggestDiagnosis(
-    @Body() dto: SuggestDiagnosisRequestDto,
-  ): Promise<SuggestDiagnosisResponseDto> {
-    return this.aiChatbotService.suggestDiagnosis(dto);
   }
 
   /**
