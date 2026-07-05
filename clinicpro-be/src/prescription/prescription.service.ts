@@ -1,0 +1,4420 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreatePrescriptionDto } from './dto/create-prescription.dto';
+import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
+import { UpdatePrescriptionServicesDto } from './dto/update-prescription-services.dto';
+import { PrescriptionStatus, WorkSessionStatus } from '@prisma/client';
+import { CodeGeneratorService } from '../user-management/patient-profile/code-generator.service';
+import { JwtUserPayload } from '../medical-record/dto/jwt-user-payload.dto';
+import { QueueResponseDto, QueuePatientDto } from './dto/queue-item.dto';
+import {
+  StartServicesDto,
+  StartServicesResponseDto,
+} from './dto/start-services.dto';
+import {
+  PendingServicesResponseDto,
+  PendingServiceDto,
+} from './dto/pending-services.dto';
+import { RedisService } from '../cache/redis.service';
+import { WebSocketService } from '../websocket/websocket.service';
+
+@Injectable()
+export class PrescriptionService {
+  private readonly TEST_MODE: boolean = process.env.TEST_MODE === 'true';
+  private codeGenerator = new CodeGeneratorService();
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+    private readonly webSocketService: WebSocketService,
+  ) {}
+
+  async create(dto: CreatePrescriptionDto, user: JwtUserPayload) {
+    const {
+      prescriptionCode,
+      patientProfileId,
+      doctorId: dtoDoctorId,
+      note,
+      services,
+      medicalRecordId,
+      belongsToServiceId,
+    } = dto as any;
+
+    // Extract doctorId from JWT token if not provided in DTO
+    let doctorId = dtoDoctorId;
+    if (!doctorId && user.doctor?.id) {
+      doctorId = user.doctor.id;
+    }
+
+    // For RECEPTIONIST, doctorId is optional; for DOCTOR, doctorId is required (from token or DTO)
+    if (user.role !== 'RECEPTIONIST' && !doctorId) {
+      throw new BadRequestException(
+        'Doctor ID is required (either from JWT token or DTO)',
+      );
+    }
+
+    if (!services || services.length === 0) {
+      throw new BadRequestException('services must not be empty');
+    }
+
+    // Validate patientProfileId exists
+    const patientProfile = await this.prisma.patientProfile.findUnique({
+      where: { id: patientProfileId },
+      select: { id: true },
+    });
+    if (!patientProfile) {
+      throw new NotFoundException('Patient profile not found');
+    }
+
+    // Validate doctorId exists if provided
+    if (doctorId) {
+      const doctor = await this.prisma.doctor.findUnique({
+        where: { id: doctorId },
+        select: { id: true },
+      });
+      if (!doctor) {
+        throw new NotFoundException('Doctor not found');
+      }
+    }
+
+    // Accept serviceId or serviceCode; resolve to IDs
+    // Validate each service provides at least one identifier (allow both)
+    for (let i = 0; i < (services as any[]).length; i++) {
+      const s = (services as any[])[i];
+      if (!s.serviceId && !s.serviceCode) {
+        throw new BadRequestException(
+          'Each service must include serviceId or serviceCode',
+        );
+      }
+    }
+
+    const requestedById = (services as any[])
+      .filter((s: any) => !!s.serviceId)
+      .map((s: any) => s.serviceId);
+    const requestedByCode = (services as any[])
+      .filter((s: any) => !!s.serviceCode)
+      .map((s: any) => s.serviceCode);
+    const servicesById = await this.prisma.service.findMany({
+      where: { id: { in: requestedById } },
+      select: { id: true, requiresDoctor: true },
+    });
+    const servicesByCode = await this.prisma.service.findMany({
+      where: { serviceCode: { in: requestedByCode } },
+      select: { id: true, serviceCode: true, requiresDoctor: true },
+    });
+    const idSet = new Set(servicesById.map((s) => s.id));
+    const codeToId = new Map(
+      servicesByCode.map((s) => [s.serviceCode, s.id] as const),
+    );
+    const missingIds = requestedById.filter((id) => !idSet.has(id));
+    const missingCodes = requestedByCode.filter((code) => !codeToId.has(code));
+    if (missingIds.length || missingCodes.length) {
+      const parts = [] as string[];
+      if (missingIds.length)
+        parts.push(`serviceId(s): ${missingIds.join(', ')}`);
+      if (missingCodes.length)
+        parts.push(`serviceCode(s): ${missingCodes.join(', ')}`);
+      throw new BadRequestException(`Invalid ${parts.join(' and ')}`);
+    }
+
+    // Receptionist cannot assign services that require a doctor
+    if (user.role === 'RECEPTIONIST') {
+      const allResolved = [
+        ...servicesById,
+        ...servicesByCode.map((s) => ({ id: s.id, requiresDoctor: s.requiresDoctor })),
+      ];
+      const requiresDoctorIds = allResolved.filter((s) => s.requiresDoctor === true).map((s) => s.id);
+      if (requiresDoctorIds.length > 0) {
+        throw new BadRequestException(
+          `Receptionist cannot assign services that require doctor: ${requiresDoctorIds.join(', ')}`,
+        );
+      }
+    }
+
+    // Optional: validate medicalRecord belongs to same patientProfile
+    if (medicalRecordId) {
+      const mr = await this.prisma.medicalRecord.findUnique({
+        where: { id: medicalRecordId },
+        select: { id: true, patientProfileId: true },
+      });
+      if (!mr) throw new NotFoundException('Medical record not found');
+      if (mr.patientProfileId !== patientProfileId) {
+        throw new BadRequestException(
+          'medicalRecordId does not belong to the provided patientProfileId',
+        );
+      }
+    }
+
+    // Optional: validate belongsToServiceId exists and belongs to a valid PrescriptionService
+    if (belongsToServiceId) {
+      const prescriptionService = await this.prisma.prescriptionService.findUnique({
+        where: { id: belongsToServiceId },
+        select: { id: true, prescriptionId: true },
+      });
+      if (!prescriptionService) {
+        throw new NotFoundException('PrescriptionService not found');
+      }
+      // Optional: validate that the PrescriptionService belongs to the same patientProfile
+      // (có thể bỏ qua validation này nếu muốn cho phép link cross-patient)
+    }
+
+    // Generate prescription code if not provided
+    let finalPrescriptionCode = prescriptionCode;
+    if (!finalPrescriptionCode) {
+      // Get doctor and patient names for code generation
+      const doctor = doctorId
+        ? await this.prisma.doctor.findUnique({
+            where: { id: doctorId },
+            include: { auth: true },
+          })
+        : null;
+
+      const patientProfile = await this.prisma.patientProfile.findUnique({
+        where: { id: patientProfileId },
+      });
+
+      finalPrescriptionCode = this.codeGenerator.generatePrescriptionCode(
+        doctor?.auth?.name || (user.role === 'RECEPTIONIST' ? 'Receptionist' : 'Unknown'),
+        patientProfile?.name || 'Unknown',
+      );
+    }
+
+    const prescription = await this.prisma.prescription.create({
+      data: {
+        prescriptionCode: finalPrescriptionCode,
+        patientProfileId,
+        doctorId: doctorId ?? null,
+        medicalRecordId: medicalRecordId ?? null,
+        note: note ?? null,
+        belongsToServiceId: belongsToServiceId ?? null,
+        services: {
+          create: services.map((s, index) => ({
+            serviceId: s.serviceId ?? codeToId.get(s.serviceCode as string)!,
+            status: s.status || PrescriptionStatus.NOT_STARTED,
+            order: s.order ?? index + 1,
+            note: s.note ?? null,
+            doctorId: s.doctorId ?? null,
+            technicianId: s.technicianId ?? null,
+          })),
+        },
+        // no medications here; managed by medication-prescription module
+      },
+      include: {
+        services: {
+          include: { service: true },
+          orderBy: { order: 'asc' },
+        },
+        patientProfile: true,
+        doctor: true,
+        belongsToService: {
+          include: {
+            service: true,
+            prescription: {
+              include: {
+                patientProfile: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Cập nhật queue trong Redis sau khi tạo prescription
+    if (doctorId) {
+      await this.updateQueueInRedis(doctorId, 'DOCTOR');
+    }
+
+    // Gửi WebSocket notification cho bệnh nhân mới đến
+    await this.notifyNewPatientArrival(prescription);
+
+    return prescription;
+  }
+
+  async findByCode(code: string) {
+    const prescription = await this.prisma.prescription.findFirst({
+      where: { prescriptionCode: code },
+      include: {
+        services: { include: { service: true }, orderBy: { order: 'asc' } },
+        patientProfile: true,
+        doctor: true,
+      },
+      orderBy: { id: 'desc' },
+    });
+
+    if (!prescription) {
+      throw new NotFoundException('Prescription not found');
+    }
+    return prescription;
+  }
+
+  async findByCodeForUser(code: string, user: JwtUserPayload) {
+    const prescription = await this.findByCode(code);
+    // Patients can only access their own profile's prescriptions
+    if (user.role === 'PATIENT') {
+      const patient = (await this.prisma.patient.findUnique({
+        where: { id: user.patient?.id as string },
+        select: { id: true, patientProfiles: { select: { id: true } } },
+      })) as any;
+      const profileIds = new Set(
+        (patient?.patientProfiles || []).map((p: any) => p.id),
+      );
+      if (!profileIds.has(prescription.patientProfileId)) {
+        throw new NotFoundException('Prescription not found');
+      }
+    }
+    return prescription;
+  }
+
+  async update(id: string, dto: UpdatePrescriptionDto, user: JwtUserPayload) {
+    const existing = await this.prisma.prescription.findUnique({
+      where: { id },
+      include: { services: true },
+    });
+    if (!existing) throw new NotFoundException('Prescription not found');
+
+    // Check if user is the doctor who created this prescription
+    if (existing.doctorId !== user.doctor?.id) {
+      throw new BadRequestException(
+        'You can only update prescriptions you created',
+      );
+    }
+
+    // Basic fields
+    const data: any = {
+      doctorId: dto.doctorId ?? existing.doctorId,
+      note: dto.note ?? existing.note,
+    };
+
+    // If services provided, validate and then replace the list using provided objects
+    if (dto.services && dto.services.length > 0) {
+      const requestedById = dto.services
+
+        .filter((s: any) => !!s.serviceId)
+        .map((s: any) => s.serviceId);
+      const requestedByCode = dto.services
+        .filter((s: any) => !!s.serviceCode)
+        .map((s: any) => s.serviceCode);
+      if (
+        requestedById.length + requestedByCode.length !==
+        dto.services.length
+      ) {
+        throw new BadRequestException(
+          'Each service must include serviceId or serviceCode',
+        );
+      }
+      const servicesById = await this.prisma.service.findMany({
+        where: { id: { in: requestedById } },
+        select: { id: true },
+      });
+      const servicesByCode = await this.prisma.service.findMany({
+        where: { serviceCode: { in: requestedByCode } },
+        select: { id: true, serviceCode: true },
+      });
+      const idSet = new Set(servicesById.map((s) => s.id));
+      const codeToId = new Map(
+        servicesByCode.map((s) => [s.serviceCode, s.id] as const),
+      );
+      const missingIds = requestedById.filter((sid) => !idSet.has(sid));
+      const missingCodes = requestedByCode.filter(
+        (code) => !codeToId.has(code),
+      );
+      if (missingIds.length || missingCodes.length) {
+        const parts = [] as string[];
+        if (missingIds.length)
+          parts.push(`serviceId(s): ${missingIds.join(', ')}`);
+        if (missingCodes.length)
+          parts.push(`serviceCode(s): ${missingCodes.join(', ')}`);
+        throw new BadRequestException(`Invalid ${parts.join(' and ')}`);
+      }
+      await this.prisma.prescriptionService.deleteMany({
+        where: { prescriptionId: id },
+      });
+      await this.prisma.prescription.update({
+        where: { id },
+        data: {
+          ...data,
+          services: {
+            create: dto.services.map((s, index) => ({
+              serviceId: s.serviceId ?? codeToId.get(s.serviceCode as string)!,
+              status: (s.status as any) || PrescriptionStatus.NOT_STARTED,
+              order: s.order ?? index + 1,
+              note: s.note ?? null,
+              doctorId: s.doctorId ?? null,
+              technicianId: s.technicianId ?? null,
+            })),
+          },
+        },
+      });
+    } else {
+      await this.prisma.prescription.update({ where: { id }, data });
+    }
+
+    const result = await this.prisma.prescription.findUnique({
+      where: { id },
+      include: {
+        services: { include: { service: true }, orderBy: { order: 'asc' } },
+        patientProfile: true,
+        doctor: true,
+      },
+    });
+
+    // Cập nhật queue trong Redis sau khi cập nhật prescription
+    if (result?.doctorId) {
+      await this.updateQueueInRedis(result.doctorId, 'DOCTOR');
+    }
+
+    return result;
+  }
+
+  async cancel(id: string, user: JwtUserPayload) {
+    const existing = await this.prisma.prescription.findUnique({
+      where: { id },
+    });
+    if (!existing) throw new NotFoundException('Prescription not found');
+
+    // Check if user is the doctor who created this prescription
+    if (existing.doctorId !== user.doctor?.id) {
+      throw new BadRequestException(
+        'You can only cancel prescriptions you created',
+      );
+    }
+
+    // Mark prescription and all services as CANCELLED
+    await this.prisma.$transaction([
+      this.prisma.prescription.update({
+        where: { id },
+        data: { status: PrescriptionStatus.CANCELLED },
+      }),
+      this.prisma.prescriptionService.updateMany({
+        where: { prescriptionId: id },
+        data: { status: PrescriptionStatus.CANCELLED },
+      }),
+    ]);
+
+    // Cập nhật queue trong Redis sau khi hủy prescription
+    if (existing?.doctorId) {
+      await this.updateQueueInRedis(existing.doctorId, 'DOCTOR');
+    }
+
+    return { id, status: PrescriptionStatus.CANCELLED };
+  }
+
+  // Below are internal methods for status transitions. Expose later when integrating.
+
+  async markServicePaid(prescriptionId: string, serviceId: string) {
+    // This method is called by the system after payment success, so no user validation needed
+    await this._markServicePaidInternal(prescriptionId, serviceId);
+  }
+
+  private async _markServicePaidInternal(
+    prescriptionId: string,
+    serviceId: string,
+  ) {
+    // Called after payment success for a given service
+    // Mark the paid service as PENDING only (no auto-start)
+    const psList = await this.prisma.prescriptionService.findMany({
+      where: { prescriptionId },
+      orderBy: { order: 'asc' },
+    });
+    if (psList.length === 0) throw new NotFoundException('No services found');
+
+    const current = psList.find((s) => s.serviceId === serviceId);
+    if (!current) throw new NotFoundException('Service not in prescription');
+
+    // Nếu đã có bác sĩ/kỹ thuật viên được gán sẵn → chuyển WAITING, ngược lại → PENDING
+    const nextStatus =
+      current.doctorId || current.technicianId
+        ? PrescriptionStatus.WAITING
+        : PrescriptionStatus.PENDING;
+
+    await this.prisma.prescriptionService.update({
+      where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
+      data: { status: nextStatus },
+    });
+
+    // Auto-start disabled: do not move any service to WAITING here
+
+    // Ensure prescription is at least PENDING
+    await this.prisma.prescription.update({
+      where: { id: prescriptionId },
+      data: { status: PrescriptionStatus.PENDING },
+    });
+  }
+
+  async markServiceServing(
+    prescriptionId: string,
+    serviceId: string,
+    user: JwtUserPayload,
+  ) {
+    // Tech confirms to start service
+    await this.prisma.prescriptionService.update({
+      where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
+      data: { status: PrescriptionStatus.SERVING },
+    });
+
+    // Cập nhật queue trong Redis
+    const prescriptionData = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      select: { doctorId: true },
+    });
+    if (prescriptionData?.doctorId) {
+      await this.updateQueueInRedis(prescriptionData.doctorId, 'DOCTOR');
+    }
+  }
+
+  async markServiceWaitingResult(
+    prescriptionId: string,
+    serviceId: string,
+    user: JwtUserPayload,
+  ) {
+    // Service done, waiting result, then unlock next pending service to WAITING
+    await this.prisma.prescriptionService.update({
+      where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
+      data: { status: PrescriptionStatus.WAITING_RESULT },
+    });
+
+    await this.unlockNextPendingService(prescriptionId);
+
+    // Cập nhật queue trong Redis
+    const prescriptionData = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      select: { doctorId: true },
+    });
+    if (prescriptionData?.doctorId) {
+      await this.updateQueueInRedis(prescriptionData.doctorId, 'DOCTOR');
+    }
+  }
+
+  async markServiceCompleted(
+    prescriptionId: string,
+    serviceId: string,
+    user: JwtUserPayload,
+  ) {
+    await this.prisma.prescriptionService.update({
+      where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
+      data: { status: PrescriptionStatus.COMPLETED },
+    });
+
+    await this.unlockNextPendingService(prescriptionId);
+
+    // If all services completed, complete prescription
+    const remaining = await this.prisma.prescriptionService.count({
+      where: { prescriptionId, NOT: { status: PrescriptionStatus.COMPLETED } },
+    });
+    if (remaining === 0) {
+      await this.prisma.prescription.update({
+        where: { id: prescriptionId },
+        data: { status: PrescriptionStatus.COMPLETED },
+      });
+    }
+
+    // Cập nhật queue trong Redis
+    const prescriptionData = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      select: { doctorId: true },
+    });
+    if (prescriptionData?.doctorId) {
+      await this.updateQueueInRedis(prescriptionData.doctorId, 'DOCTOR');
+    }
+  }
+
+  /**
+   * Tìm prescriptionServiceId từ prescriptionId và serviceId
+   */
+  async findPrescriptionServiceId(
+    prescriptionId: string,
+    serviceId: string,
+  ): Promise<string | null> {
+    const prescriptionService = await this.prisma.prescriptionService.findUnique({
+      where: {
+        prescriptionId_serviceId: {
+          prescriptionId,
+          serviceId,
+        },
+      },
+      select: { id: true },
+    });
+    
+    return prescriptionService?.id || null;
+  }
+
+  async markServiceSkipped(
+    prescriptionServiceId: string,
+    user: JwtUserPayload,
+  ) {
+    // Lấy thông tin service hiện tại để tăng skipCount
+    const currentService = await this.prisma.prescriptionService.findUnique({
+      where: { id: prescriptionServiceId },
+      select: {
+        skipCount: true,
+        prescriptionId: true,
+        doctorId: true,
+        technicianId: true,
+        status: true,
+        prescription: {
+          select: { doctorId: true },
+        },
+      },
+    });
+
+    if (!currentService) {
+      throw new NotFoundException('Prescription service not found');
+    }
+
+    // Không cho phép skip nếu service đang ở trạng thái SERVING
+    if (currentService.status === PrescriptionStatus.SERVING) {
+      return {
+        success: false,
+        message: 'Không thể bỏ qua bệnh nhân đang được phục vụ',
+      };
+    }
+
+    // Kiểm tra số lượng bệnh nhân trong queue trước khi skip
+    const queueData = await this.buildQueueFromDatabase(user);
+    const waitingPatients = queueData.patients.filter(
+      (p) => p.overallStatus === 'WAITING' || p.overallStatus === 'SKIPPED',
+    );
+
+    // Nếu chỉ có 1 bệnh nhân trong queue, không cho phép skip
+    if (waitingPatients.length <= 1) {
+      return {
+        success: false,
+        message: 'Không thể bỏ qua bệnh nhân này vì đây là bệnh nhân duy nhất trong hàng chờ',
+      };
+    }
+
+    await this.prisma.prescriptionService.update({
+      where: { id: prescriptionServiceId },
+      data: {
+        status: PrescriptionStatus.SKIPPED,
+        skipCount: (currentService?.skipCount || 0) + 1,
+      },
+    });
+
+    // Rebuild lại queue trong Redis để đảm bảo thứ tự đúng sau khi skip
+    // Bệnh nhân bị skip sẽ được đưa xuống sau các bệnh nhân WAITING nhưng vẫn ở trên RETURNING và WAITING_RESULT
+    if (currentService.doctorId) {
+      await this.updateQueueInRedis(currentService.doctorId, 'DOCTOR');
+    }
+    if (currentService.technicianId) {
+      await this.updateQueueInRedis(currentService.technicianId, 'TECHNICIAN');
+    }
+
+    return {
+      success: true,
+      message: 'Đã bỏ qua bệnh nhân thành công',
+    };
+  }
+
+  async updateServiceStatus(
+    prescriptionId: string,
+    serviceId: string,
+    status: PrescriptionStatus,
+    user: JwtUserPayload,
+  ) {
+    // Kiểm tra service có tồn tại không
+    const service = await this.prisma.prescriptionService.findUnique({
+      where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
+      select: { prescriptionId: true },
+    });
+
+    if (!service) {
+      throw new NotFoundException('Prescription service not found');
+    }
+
+    // Update status
+    await this.prisma.prescriptionService.update({
+      where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
+      data: { status },
+    });
+
+    // Cập nhật queue trong Redis
+    const prescriptionData = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      select: { doctorId: true },
+    });
+
+    // Lấy technicianId từ PrescriptionService
+    const prescriptionServiceData =
+      await this.prisma.prescriptionService.findUnique({
+        where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
+        select: { technicianId: true },
+      });
+
+    if (prescriptionData?.doctorId) {
+      await this.updateQueueInRedis(prescriptionData.doctorId, 'DOCTOR');
+    }
+    if (prescriptionServiceData?.technicianId) {
+      await this.updateQueueInRedis(
+        prescriptionServiceData.technicianId,
+        'TECHNICIAN',
+      );
+    }
+
+    return {
+      prescriptionId,
+      serviceId,
+      status,
+      message: 'Service status updated successfully',
+    };
+  }
+
+  async getPrescriptionsByMedicalRecord(medicalRecordId: string) {
+    const prescriptions = await this.prisma.prescription.findMany({
+      where: { medicalRecordId },
+      include: {
+        services: {
+          include: { 
+            service: true,
+            // Include issued prescriptions (phiếu con) với đầy đủ thông tin
+            issuedPrescriptions: {
+              include: {
+                services: {
+                  include: { service: true },
+                  orderBy: { order: 'asc' },
+                },
+                patientProfile: true,
+                doctor: true,
+              },
+              orderBy: { id: 'desc' },
+            },
+          },
+          orderBy: { order: 'asc' },
+        },
+        patientProfile: true,
+        doctor: true,
+      },
+      orderBy: { id: 'desc' }, // Sắp xếp theo ID (UUID mới nhất trước)
+    });
+
+    return prescriptions;
+  }
+
+  async getPrescriptionsByMedicalRecordForUser(
+    medicalRecordId: string,
+    user: JwtUserPayload,
+  ) {
+    const list = await this.getPrescriptionsByMedicalRecord(medicalRecordId);
+    if (user.role === 'PATIENT') {
+      // Ensure the medical record belongs to this patient's profile(s)
+      const mr = await this.prisma.medicalRecord.findUnique({
+        where: { id: medicalRecordId },
+        select: { patientProfileId: true },
+      });
+      if (!mr) throw new NotFoundException('Medical record not found');
+      const patient = (await this.prisma.patient.findUnique({
+        where: { id: user.patient?.id as string },
+        select: { id: true, patientProfiles: { select: { id: true } } },
+      })) as any;
+      const profileIds = new Set(
+        (patient?.patientProfiles || []).map((p: any) => p.id),
+      );
+      if (!profileIds.has(mr.patientProfileId)) {
+        throw new NotFoundException('Medical record not found');
+      }
+      return list;
+    }
+    return list;
+  }
+
+  async getMyPrescriptionsByProfile(
+    patientProfileId: string,
+    user: JwtUserPayload,
+  ) {
+    // Check the profile belongs to current patient
+    const patient = (await this.prisma.patient.findUnique({
+      where: { id: user.patient?.id as string },
+      select: { id: true, patientProfiles: { select: { id: true } } },
+    })) as any;
+    const profileIds = new Set(
+      (patient?.patientProfiles || []).map((p: any) => p.id),
+    );
+    if (!profileIds.has(patientProfileId)) {
+      throw new NotFoundException('Patient profile not found');
+    }
+    return this.prisma.prescription.findMany({
+      where: { patientProfileId },
+      include: {
+        services: { include: { service: true }, orderBy: { order: 'asc' } },
+        patientProfile: true,
+        doctor: true,
+      },
+      orderBy: { id: 'desc' },
+    });
+  }
+
+  // // OpenFDA integration (public drug info)
+  // async searchDrugsOpenFda(query: string) {
+  //   const url = `https://api.fda.gov/drug/label.json?search=${encodeURIComponent(query)}&limit=10`;
+  //   const res = await axios.get(url);
+  //   return res.data;
+  // }
+
+  // async getDrugByNdcOpenFda(ndc: string) {
+  //   const url = `https://api.fda.gov/drug/ndc.json?search=product_ndc:${encodeURIComponent(ndc)}&limit=1`;
+  //   const res = await axios.get(url);
+  //   return res.data;
+  // }
+
+  private async _startFirstPendingServiceIfNoActive(prescriptionId: string) {
+    const psList = await this.prisma.prescriptionService.findMany({
+      where: { prescriptionId },
+      orderBy: { order: 'asc' },
+    });
+
+    // Check if any service is currently active (WAITING, SERVING, WAITING_RESULT)
+    const activeStatuses = [
+      PrescriptionStatus.WAITING,
+      PrescriptionStatus.SERVING,
+      PrescriptionStatus.WAITING_RESULT,
+    ];
+    const activeExists = psList.some((s) =>
+      activeStatuses.includes(s.status as any),
+    );
+
+    // If no active service, start the first PENDING service in order
+    if (!activeExists) {
+      // Find the service with lowest order that is PENDING (paid)
+      const firstPendingService = psList
+        .filter((s) => s.status === PrescriptionStatus.PENDING)
+        .sort((a, b) => a.order - b.order)[0];
+
+      if (firstPendingService) {
+        // Auto routing removed: only move the first PENDING service to WAITING without assignment
+        await this.prisma.prescriptionService.update({
+          where: {
+            prescriptionId_serviceId: {
+              prescriptionId,
+              serviceId: firstPendingService.serviceId,
+            },
+          },
+          data: {
+            status: PrescriptionStatus.WAITING,
+            doctorId: null,
+            technicianId: null,
+          },
+        });
+      }
+    }
+  }
+
+  private async unlockNextPendingService(prescriptionId: string) {
+    await this._startFirstPendingServiceIfNoActive(prescriptionId);
+  }
+
+  /**
+   * Assign the next pending service (lowest order) to an in-progress work session that can handle
+   * the most pending services of this prescription, then break ties by least current workload.
+   */
+  async assignNextPendingService(prescriptionCode: string) {
+    const now = new Date();
+    const prescription = await this.prisma.prescription.findFirst({
+      where: { prescriptionCode },
+      include: {
+        services: {
+          include: { service: true },
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+    if (!prescription) {
+      throw new NotFoundException('Prescription not found');
+    }
+
+    const pendingServices = prescription.services.filter(
+      (s) => s.status === PrescriptionStatus.PENDING,
+    );
+    if (pendingServices.length === 0) {
+      throw new BadRequestException('No pending services to assign');
+    }
+
+    const target = pendingServices[0];
+    const pendingServiceIds = new Set(pendingServices.map((ps) => ps.serviceId));
+
+    // DEBUG: Query tất cả work sessions có status APPROVED hoặc IN_PROGRESS để kiểm tra
+    const allActiveSessions = await this.prisma.workSession.findMany({
+      where: {
+        status: { in: [WorkSessionStatus.APPROVED, WorkSessionStatus.IN_PROGRESS] },
+      },
+      include: {
+        services: {
+          include: {
+            service: {
+              select: {
+                id: true,
+                serviceCode: true,
+                name: true,
+              },
+            },
+          },
+        },
+        doctor: {
+          include: {
+            auth: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        technician: {
+          include: {
+            auth: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        startTime: 'desc',
+      },
+    });
+
+    // DEBUG: Log tất cả work sessions tìm thấy
+    console.log('=== DEBUG: All work sessions with APPROVED/IN_PROGRESS status ===');
+    console.log(`Total sessions found: ${allActiveSessions.length}`);
+    console.log(`Current time (now): ${now.toISOString()}`);
+    console.log(`Pending service IDs: ${Array.from(pendingServiceIds).join(', ')}`);
+    
+    allActiveSessions.forEach((session, index) => {
+      // Logic mới: IN_PROGRESS chỉ cần check endTime, APPROVED cần check cả startTime và endTime
+      const isInTimeRange = session.status === WorkSessionStatus.IN_PROGRESS
+        ? session.endTime >= now
+        : session.startTime <= now && session.endTime >= now;
+      const sessionServiceIds = session.services.map(ws => ws.serviceId);
+      const hasMatchingService = sessionServiceIds.some(id => pendingServiceIds.has(id));
+      
+      console.log(`\nSession ${index + 1}:`);
+      console.log(`  - ID: ${session.id}`);
+      console.log(`  - Status: ${session.status}`);
+      console.log(`  - StartTime: ${session.startTime.toISOString()}`);
+      console.log(`  - EndTime: ${session.endTime.toISOString()}`);
+      console.log(`  - Time check logic: ${session.status === WorkSessionStatus.IN_PROGRESS ? 'IN_PROGRESS (only endTime >= now)' : 'APPROVED (startTime <= now AND endTime >= now)'}`);
+      console.log(`  - Is in time range: ${isInTimeRange} (startTime <= now: ${session.startTime <= now}, endTime >= now: ${session.endTime >= now})`);
+      console.log(`  - Doctor: ${session.doctor?.auth?.name || 'N/A'} (ID: ${session.doctorId || 'N/A'})`);
+      console.log(`  - Technician: ${session.technician?.auth?.name || 'N/A'} (ID: ${session.technicianId || 'N/A'})`);
+      console.log(`  - Services (${session.services.length}):`, session.services.map(ws => ({
+        serviceId: ws.serviceId,
+        serviceCode: ws.service?.serviceCode,
+        serviceName: ws.service?.name,
+      })));
+      console.log(`  - Has matching service: ${hasMatchingService}`);
+      console.log(`  - Session service IDs: ${sessionServiceIds.join(', ')}`);
+    });
+    console.log('=== END DEBUG ===\n');
+
+    // Query work sessions với điều kiện đầy đủ
+    // Lưu ý: 
+    // - IN_PROGRESS sessions: Không cần check startTime (vì đã active rồi), chỉ check endTime
+    // - APPROVED sessions: Cần check cả startTime và endTime
+    // - Include TẤT CẢ services của work session, không filter trong include để có thể debug được đầy đủ thông tin
+    const sessions = await this.prisma.workSession.findMany({
+      where: {
+        OR: [
+          // IN_PROGRESS: Chỉ cần check endTime >= now (đã bắt đầu rồi)
+          {
+            status: WorkSessionStatus.IN_PROGRESS,
+            endTime: { gte: now },
+            services: {
+              some: {
+                serviceId: { in: Array.from(pendingServiceIds) },
+              },
+            },
+          },
+          // APPROVED: Cần check cả startTime và endTime (chưa bắt đầu nhưng sắp bắt đầu)
+          {
+            status: WorkSessionStatus.APPROVED,
+            startTime: { lte: now },
+            endTime: { gte: now },
+            services: {
+              some: {
+                serviceId: { in: Array.from(pendingServiceIds) },
+              },
+            },
+          },
+        ],
+      },
+      include: {
+        services: {
+          // Include TẤT CẢ services, không filter ở đây
+          include: {
+            service: {
+              select: {
+                id: true,
+                serviceCode: true,
+                name: true,
+              },
+            },
+          },
+        },
+        doctor: {
+          include: {
+            auth: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        technician: {
+          include: {
+            auth: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    console.log(`=== Sessions after filtering (time range + services): ${sessions.length} ===`);
+    sessions.forEach((session, index) => {
+      console.log(`Session ${index + 1}: ID=${session.id}, Status=${session.status}, Doctor=${session.doctor?.auth?.name || 'N/A'}, Services=${session.services.map(ws => ws.serviceId).join(',')}`);
+    });
+
+    // Fallback: Nếu query qua relation không tìm thấy, thử query trực tiếp qua WorkSessionService
+    let finalSessions = sessions;
+    if (sessions.length === 0) {
+      console.warn('No sessions found via relation query, trying direct WorkSessionService query...');
+      const workSessionServices = await this.prisma.workSessionService.findMany({
+        where: {
+          serviceId: { in: Array.from(pendingServiceIds) },
+          workSession: {
+            OR: [
+              {
+                status: WorkSessionStatus.IN_PROGRESS,
+                endTime: { gte: now },
+              },
+              {
+                status: WorkSessionStatus.APPROVED,
+                startTime: { lte: now },
+                endTime: { gte: now },
+              },
+            ],
+          },
+        },
+        include: {
+          workSession: {
+            include: {
+              services: {
+                include: {
+                  service: {
+                    select: {
+                      id: true,
+                      serviceCode: true,
+                      name: true,
+                    },
+                  },
+                },
+              },
+              doctor: {
+                include: {
+                  auth: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
+              technician: {
+                include: {
+                  auth: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Lấy unique work sessions
+      const sessionMap = new Map();
+      workSessionServices.forEach(wss => {
+        if (!sessionMap.has(wss.workSessionId)) {
+          sessionMap.set(wss.workSessionId, wss.workSession);
+        }
+      });
+      finalSessions = Array.from(sessionMap.values());
+      
+      console.log(`=== Fallback query found ${finalSessions.length} sessions ===`);
+      finalSessions.forEach((session, index) => {
+        console.log(`Session ${index + 1}: ID=${session.id}, Status=${session.status}, Doctor=${session.doctor?.auth?.name || 'N/A'}, Services=${session.services.map(ws => ws.serviceId).join(',')}`);
+      });
+    }
+
+    if (finalSessions.length === 0) {
+      // Kiểm tra từng điều kiện riêng lẻ
+      const sessionsByStatus = await this.prisma.workSession.findMany({
+        where: {
+          status: { in: [WorkSessionStatus.APPROVED, WorkSessionStatus.IN_PROGRESS] },
+        },
+        select: { id: true, status: true, startTime: true, endTime: true },
+      });
+
+      // Check sessions by time với logic tương tự (IN_PROGRESS chỉ check endTime, APPROVED check cả hai)
+      const sessionsByTime = await this.prisma.workSession.findMany({
+        where: {
+          OR: [
+            {
+              status: WorkSessionStatus.IN_PROGRESS,
+              endTime: { gte: now },
+            },
+            {
+              status: WorkSessionStatus.APPROVED,
+              startTime: { lte: now },
+              endTime: { gte: now },
+            },
+          ],
+        },
+        select: { id: true, status: true, startTime: true, endTime: true },
+      });
+
+      // Kiểm tra WorkSessionService trực tiếp với logic tương tự
+      const workSessionServices = await this.prisma.workSessionService.findMany({
+        where: {
+          serviceId: { in: Array.from(pendingServiceIds) },
+          workSession: {
+            OR: [
+              {
+                status: WorkSessionStatus.IN_PROGRESS,
+                endTime: { gte: now },
+              },
+              {
+                status: WorkSessionStatus.APPROVED,
+                startTime: { lte: now },
+                endTime: { gte: now },
+              },
+            ],
+          },
+        },
+        include: {
+          workSession: {
+            select: {
+              id: true,
+              status: true,
+              startTime: true,
+              endTime: true,
+              doctorId: true,
+              technicianId: true,
+            },
+          },
+        },
+      });
+
+      console.error(`\nWorkSessionServices found (direct query): ${workSessionServices.length}`);
+      workSessionServices.forEach((wss, i) => {
+        console.error(`  [${i + 1}] WorkSessionID=${wss.workSessionId}, ServiceID=${wss.serviceId}, SessionStatus=${wss.workSession.status}`);
+      });
+
+      const sessionsByServices = await this.prisma.workSession.findMany({
+        where: {
+          OR: [
+            {
+              status: WorkSessionStatus.IN_PROGRESS,
+              endTime: { gte: now },
+              services: {
+                some: {
+                  serviceId: { in: Array.from(pendingServiceIds) },
+                },
+              },
+            },
+            {
+              status: WorkSessionStatus.APPROVED,
+              startTime: { lte: now },
+              endTime: { gte: now },
+              services: {
+                some: {
+                  serviceId: { in: Array.from(pendingServiceIds) },
+                },
+              },
+            },
+          ],
+        },
+        include: {
+          services: {
+            select: { serviceId: true },
+          },
+        },
+      });
+
+      console.error('=== DEBUG: Breakdown by condition ===');
+      console.error(`Sessions with correct status: ${sessionsByStatus.length}`);
+      sessionsByStatus.forEach((s, i) => {
+        console.error(`  [${i + 1}] ID=${s.id}, Status=${s.status}, Start=${s.startTime.toISOString()}, End=${s.endTime.toISOString()}, InRange=${s.startTime <= now && s.endTime >= now}`);
+      });
+      
+      console.error(`\nSessions with correct status + time range: ${sessionsByTime.length}`);
+      sessionsByTime.forEach((s, i) => {
+        console.error(`  [${i + 1}] ID=${s.id}, Status=${s.status}, Start=${s.startTime.toISOString()}, End=${s.endTime.toISOString()}`);
+      });
+      
+      console.error(`\nSessions with correct status + time range + services: ${sessionsByServices.length}`);
+      sessionsByServices.forEach((s, i) => {
+        const serviceIds = s.services.map(ws => ws.serviceId);
+        console.error(`  [${i + 1}] ID=${s.id}, Status=${s.status}, Services=[${serviceIds.join(', ')}]`);
+      });
+      
+      console.error(`\nPending service IDs: ${Array.from(pendingServiceIds).join(', ')}`);
+      console.error(`Current time (now): ${now.toISOString()}`);
+
+      throw new BadRequestException(
+        `No active work sessions found for services: ${Array.from(pendingServiceIds).join(', ')}. ` +
+        `Current time: ${now.toISOString()}. ` +
+        `Found ${sessionsByStatus.length} sessions with correct status, ` +
+        `${sessionsByTime.length} sessions in time range, ` +
+        `${sessionsByServices.length} sessions with matching services. ` +
+        `Check console logs for detailed session information.`,
+      );
+    }
+
+    const serviceIdToDuration = new Map(
+      prescription.services.map(
+        (ps) => [ps.serviceId, ps.service?.durationMinutes ?? 15] as const,
+      ),
+    );
+
+    // Filter sessions to only include those that have at least one of the pending services
+    // This avoids cartesian product issues when multiple work sessions have the same service
+    const filteredSessions = finalSessions.filter((session) => {
+      const sessionServiceIds = new Set(session.services.map((ws: any) => ws.serviceId));
+      return pendingServices.some((ps) => sessionServiceIds.has(ps.serviceId));
+    });
+
+    if (filteredSessions.length === 0 && finalSessions.length > 0) {
+      console.warn('Work sessions found but none match pending services', {
+        totalSessions: finalSessions.length,
+        sessionServiceIds: finalSessions.map(s => s.services.map((ws: any) => ws.serviceId)),
+        pendingServiceIds: Array.from(pendingServiceIds),
+      });
+      throw new BadRequestException(
+        `Found ${finalSessions.length} work session(s) but none of them have the required services. ` +
+        `Pending services: ${Array.from(pendingServiceIds).join(', ')}`,
+      );
+    }
+
+    type ScoredSession = {
+      session: any;
+      canDoCount: number;
+      timeLeftMin: number;
+      currentWorkloadMin: number;
+      canDoServiceIds: string[];
+    };
+
+    const scored: ScoredSession[] = [];
+    for (const session of filteredSessions) {
+      const timeLeftMin = Math.max(
+        0,
+        Math.ceil((session.endTime.getTime() - now.getTime()) / 60000),
+      );
+      const sessionServiceIds = new Set(
+        session.services.map((ws: any) => ws.serviceId),
+      );
+      // Candidate pending in this prescription that this session can do
+      const canDo = pendingServices.filter((ps) =>
+        sessionServiceIds.has(ps.serviceId),
+      );
+      if (canDo.length === 0) continue;
+
+      // Filter sessions that at least can finish the first pending service
+      const targetDuration = serviceIdToDuration.get(target.serviceId) ?? 15;
+      if (timeLeftMin < targetDuration) continue;
+
+      // Compute current workload in this session by summing durations of services started in this session window
+      const startedHere = await this.prisma.prescriptionService.findMany({
+        where: {
+          workSessionId: session.id,
+          startedAt: { gte: session.startTime, lte: session.endTime },
+        },
+        include: { service: true },
+      });
+      const currentWorkloadMin = startedHere.reduce(
+        (sum, x) => sum + (x.service?.durationMinutes ?? 15),
+        0,
+      );
+
+      scored.push({
+        session,
+        canDoCount: canDo.length,
+        timeLeftMin,
+        currentWorkloadMin,
+        canDoServiceIds: canDo.map((x) => x.serviceId),
+      });
+    }
+
+    if (scored.length === 0) {
+      console.warn('No suitable work session found after scoring', {
+        filteredSessionsCount: filteredSessions.length,
+        pendingServiceIds: Array.from(pendingServiceIds),
+        targetServiceId: target.serviceId,
+        targetDuration: serviceIdToDuration.get(target.serviceId) ?? 15,
+        now: now.toISOString(),
+      });
+      throw new BadRequestException(
+        `No suitable work session found. ` +
+        `Found ${filteredSessions.length} session(s) but none can complete the service within the available time. ` +
+        `Target service: ${target.serviceId}, required duration: ${serviceIdToDuration.get(target.serviceId) ?? 15} minutes.`,
+      );
+    }
+
+    // Rank: most pending services it can do, then least workload, then most time left
+    scored.sort((a, b) => {
+      if (b.canDoCount !== a.canDoCount) return b.canDoCount - a.canDoCount;
+      if (a.currentWorkloadMin !== b.currentWorkloadMin)
+        return a.currentWorkloadMin - b.currentWorkloadMin;
+      return b.timeLeftMin - a.timeLeftMin;
+    });
+
+    const chosen = scored[0].session;
+
+    const updated = await this.prisma.prescriptionService.update({
+      where: {
+        prescriptionId_serviceId: {
+          prescriptionId: prescription.id,
+          serviceId: target.serviceId,
+        },
+      },
+      data: {
+        status: PrescriptionStatus.WAITING,
+        doctorId: chosen.doctorId ?? null,
+        technicianId: chosen.technicianId ?? null,
+        workSessionId: chosen.id,
+      },
+      include: { service: true },
+    });
+
+    // Xây dựng preview queue cho user (doctor/technician) được gán
+    let queuePreview: QueueResponseDto | null = null as any;
+    try {
+      const role = chosen.doctorId
+        ? 'DOCTOR'
+        : chosen.technicianId
+          ? 'TECHNICIAN'
+          : null;
+      const userId = chosen.doctorId ?? chosen.technicianId ?? null;
+      if (role && userId) {
+        queuePreview = await this.buildQueueFromDatabase({
+          id: userId,
+          role: role,
+          doctor: role === 'DOCTOR' ? { id: userId } : undefined,
+          technician: role === 'TECHNICIAN' ? { id: userId } : undefined,
+        } as any);
+      }
+    } catch {
+      /* empty */
+    }
+
+    return {
+      assignedService: {
+        prescriptionId: updated.prescriptionId,
+        serviceId: updated.serviceId,
+        status: updated.status,
+        doctorId: updated.doctorId,
+        technicianId: updated.technicianId,
+        workSessionId: updated.workSessionId,
+      },
+      chosenSession: {
+        id: chosen.id,
+        doctorId: chosen.doctorId,
+        technicianId: chosen.technicianId,
+        startTime: chosen.startTime,
+        endTime: chosen.endTime,
+      },
+      queuePreview,
+    };
+  }
+
+  /**
+   * Gán nhiều dịch vụ cho work session
+   * Hỗ trợ các trạng thái: PENDING, RESCHEDULED, WAITING_RESULT
+   */
+  async assignServices(
+    prescriptionCode: string,
+    prescriptionServiceIds: string[],
+  ) {
+    const now = new Date();
+    
+    // Tìm prescription
+    const prescription = await this.prisma.prescription.findFirst({
+      where: { prescriptionCode },
+      include: {
+        services: {
+          where: {
+            id: { in: prescriptionServiceIds },
+          },
+          include: { service: true },
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+
+    if (!prescription) {
+      throw new NotFoundException('Prescription not found');
+    }
+
+    if (prescription.services.length === 0) {
+      throw new BadRequestException('No services found with provided IDs');
+    }
+
+    if (prescription.services.length !== prescriptionServiceIds.length) {
+      const foundIds = prescription.services.map((s) => s.id);
+      const missingIds = prescriptionServiceIds.filter(
+        (id) => !foundIds.includes(id),
+      );
+      throw new BadRequestException(
+        `Some services not found: ${missingIds.join(', ')}`,
+      );
+    }
+
+    // Validate status: chỉ cho phép PENDING, RESCHEDULED, hoặc WAITING_RESULT
+    const invalidServices = prescription.services.filter(
+      (s) =>
+        s.status !== PrescriptionStatus.PENDING &&
+        s.status !== PrescriptionStatus.RESCHEDULED &&
+        s.status !== PrescriptionStatus.WAITING_RESULT,
+    );
+
+    if (invalidServices.length > 0) {
+      throw new BadRequestException(
+        `Services must be PENDING, RESCHEDULED, or WAITING_RESULT. Invalid services: ${invalidServices.map((s) => `${s.id} (${s.status})`).join(', ')}`,
+      );
+    }
+
+    // Phân loại services theo status
+    const waitingResultServices = prescription.services.filter(
+      (s) => s.status === PrescriptionStatus.WAITING_RESULT,
+    );
+    const otherServices = prescription.services.filter(
+      (s) =>
+        s.status === PrescriptionStatus.PENDING ||
+        s.status === PrescriptionStatus.RESCHEDULED,
+    );
+
+    const results: any[] = [];
+
+    // Xử lý WAITING_RESULT services: cập nhật thành RETURNING
+    for (const service of waitingResultServices) {
+      const updated = await this.prisma.prescriptionService.update({
+        where: { id: service.id },
+        data: {
+          status: PrescriptionStatus.RETURNING,
+        },
+        include: { service: true },
+      });
+
+      results.push({
+        prescriptionServiceId: updated.id,
+        serviceId: updated.serviceId,
+        serviceName: updated.service.name,
+        oldStatus: PrescriptionStatus.WAITING_RESULT,
+        newStatus: PrescriptionStatus.RETURNING,
+        doctorId: updated.doctorId,
+        technicianId: updated.technicianId,
+        workSessionId: updated.workSessionId,
+      });
+    }
+
+    // Xử lý PENDING/RESCHEDULED services: tìm work session và cập nhật thành WAITING (theo trình tự: PENDING → WAITING → SERVING)
+    if (otherServices.length > 0) {
+      const serviceIds = new Set(otherServices.map((s) => s.serviceId));
+
+      // Tìm work sessions phù hợp
+      const sessions = await this.prisma.workSession.findMany({
+        where: {
+          OR: [
+            {
+              status: WorkSessionStatus.IN_PROGRESS,
+              endTime: { gte: now },
+              services: {
+                some: {
+                  serviceId: { in: Array.from(serviceIds) },
+                },
+              },
+            },
+            {
+              status: WorkSessionStatus.APPROVED,
+              startTime: { lte: now },
+              endTime: { gte: now },
+              services: {
+                some: {
+                  serviceId: { in: Array.from(serviceIds) },
+                },
+              },
+            },
+          ],
+        },
+        include: {
+          services: {
+            include: {
+              service: {
+                select: {
+                  id: true,
+                  serviceCode: true,
+                  name: true,
+                },
+              },
+            },
+          },
+          booth: {
+            include: {
+              room: {
+                select: {
+                  id: true,
+                  roomCode: true,
+                  roomName: true,
+                },
+              },
+            },
+          },
+          doctor: {
+            include: {
+              auth: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          technician: {
+            include: {
+              auth: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (sessions.length === 0) {
+        throw new BadRequestException(
+          `No active work sessions found for services: ${Array.from(serviceIds).join(', ')}`,
+        );
+      }
+
+      // Gán từng service cho work session phù hợp với load balancing
+      for (const service of otherServices) {
+        // Tìm tất cả sessions có service này
+        const suitableSessions = sessions.filter((session) =>
+          session.services.some((ws) => ws.serviceId === service.serviceId),
+        );
+
+        if (suitableSessions.length === 0) {
+          throw new BadRequestException(
+            `No suitable work session found for service: ${service.serviceId}`,
+          );
+        }
+
+        // Load balancing: Chọn session có ít bệnh nhân đang chờ nhất
+        let suitableSession = suitableSessions[0];
+        
+        if (suitableSessions.length > 1) {
+          // Đếm số lượng PrescriptionService đang chờ cho mỗi session
+          const sessionQueueCounts = await Promise.all(
+            suitableSessions.map(async (session) => {
+              const queueCount = await this.prisma.prescriptionService.count({
+                where: {
+                  workSessionId: session.id,
+                  serviceId: service.serviceId,
+                  status: {
+                    in: [
+                      PrescriptionStatus.WAITING,
+                      PrescriptionStatus.PREPARING,
+                      PrescriptionStatus.SERVING,
+                    ],
+                  },
+                },
+              });
+              return { session, queueCount };
+            }),
+          );
+
+          // Sắp xếp theo số lượng queue (tăng dần) và chọn session có ít nhất
+          sessionQueueCounts.sort((a, b) => a.queueCount - b.queueCount);
+          suitableSession = sessionQueueCounts[0].session;
+
+          // Nếu có nhiều session có cùng số lượng queue nhỏ nhất, ưu tiên doctor hơn technician
+          const minQueueCount = sessionQueueCounts[0].queueCount;
+          const sessionsWithMinQueue = sessionQueueCounts.filter(
+            (item) => item.queueCount === minQueueCount,
+          );
+          
+          if (sessionsWithMinQueue.length > 1) {
+            // Tìm session có doctorId (ưu tiên doctor)
+            const doctorSession = sessionsWithMinQueue.find(
+              (item) => item.session.doctorId !== null,
+            );
+            if (doctorSession) {
+              suitableSession = doctorSession.session;
+            } else {
+              // Nếu không có doctor, chọn session đầu tiên
+              suitableSession = sessionsWithMinQueue[0].session;
+            }
+          }
+        }
+
+        // Xác định status mới: WAITING cho PENDING/RESCHEDULED (theo đúng trình tự: PENDING → WAITING → SERVING)
+        const newStatus = PrescriptionStatus.WAITING;
+
+        // Lấy boothId và clinicRoomId từ work session
+        const boothId = suitableSession.boothId ?? null;
+        const clinicRoomId = suitableSession.booth?.room?.id ?? null;
+
+        const updated = await this.prisma.prescriptionService.update({
+          where: { id: service.id },
+          data: {
+            status: newStatus,
+            doctorId: suitableSession.doctorId ?? null,
+            technicianId: suitableSession.technicianId ?? null,
+            workSessionId: suitableSession.id,
+            boothId: boothId,
+            clinicRoomId: clinicRoomId,
+            // Không set startedAt ở đây vì chưa bắt đầu phục vụ (chỉ mới WAITING)
+          },
+          include: { service: true },
+        });
+
+        results.push({
+          prescriptionServiceId: updated.id,
+          serviceId: updated.serviceId,
+          serviceName: updated.service.name,
+          oldStatus: service.status,
+          newStatus: newStatus,
+          doctorId: updated.doctorId,
+          technicianId: updated.technicianId,
+          workSessionId: updated.workSessionId,
+          chosenSession: {
+            id: suitableSession.id,
+            doctorId: suitableSession.doctorId,
+            doctorName: suitableSession.doctor?.auth?.name ?? null,
+            technicianId: suitableSession.technicianId,
+            technicianName: suitableSession.technician?.auth?.name ?? null,
+            startTime: suitableSession.startTime,
+            endTime: suitableSession.endTime,
+            boothId: suitableSession.boothId,
+            boothCode: suitableSession.booth?.boothCode ?? null,
+            boothName: suitableSession.booth?.name ?? null,
+            clinicRoomId: suitableSession.booth?.room?.id ?? null,
+            clinicRoomCode: suitableSession.booth?.room?.roomCode ?? null,
+            clinicRoomName: suitableSession.booth?.room?.roomName ?? null,
+          },
+        });
+      }
+    }
+
+    return {
+      success: true,
+      assignedServices: results,
+      totalAssigned: results.length,
+    };
+  }
+
+  /**
+   * Tính tuổi từ ngày sinh
+   */
+  private calculateAge(dateOfBirth: Date): number {
+    const today = new Date();
+    const birthDate = new Date(dateOfBirth);
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < birthDate.getDate())
+    ) {
+      age--;
+    }
+
+    return age;
+  }
+
+  /**
+   * Tính toán xem bệnh nhân có đến đúng giờ không dựa trên lịch hẹn
+   */
+  private calculateIsOnTime(
+    hasAppointment: boolean,
+    appointmentDetails: any,
+  ): boolean {
+    if (!hasAppointment || !appointmentDetails) {
+      return false; // Không có lịch hẹn thì không tính là đúng giờ
+    }
+
+    const checkInTime = new Date();
+    const [hours, minutes] = appointmentDetails.startTime.split(':');
+    const appointmentTime = new Date(appointmentDetails.date);
+    appointmentTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+    // Tính khoảng cách thời gian (tính bằng phút)
+    const timeDifferenceMinutes = Math.abs(
+      (checkInTime.getTime() - appointmentTime.getTime()) / (1000 * 60),
+    );
+
+    // Đúng giờ nếu trong khoảng ±20 phút
+    return timeDifferenceMinutes <= 20;
+  }
+
+  /**
+   * Tính toán độ ưu tiên cho dịch vụ dựa trên logic từ take-number.service.ts
+   * Thứ tự ưu tiên: 1. Đang phục vụ 2. Tiếp theo 3. Bị skip (skipCount nhỏ nhất) 4. Miss (1) 5. Miss (2) 6. Miss (3) ... 7. Già (>75) 8. Trẻ em (<6) 9. Khuyết tật 10. Mang thai 11. Có lịch hẹn 12. Thường
+   *
+   * QUAN TRỌNG: SERVING và PREPARING luôn ở vị trí đầu queue, không bị chen lên bởi bệnh nhân mới
+   */
+  private calculateServicePriority(
+    status: PrescriptionStatus,
+    patientAge: number,
+    isDisabled: boolean,
+    isPregnant: boolean,
+    hasAppointment: boolean,
+    order: number,
+    startedAt: Date | null,
+    skipCount: number = 0,
+  ): number {
+    let priorityScore = 0;
+
+    // 1. Đang phục vụ (SERVING) - ưu tiên cao nhất, KHÔNG BAO GIỜ bị chen lên
+    if (status === PrescriptionStatus.SERVING) {
+      return 0;
+    }
+
+    // 2. Tiếp theo (PREPARING) - ưu tiên cao thứ 2, KHÔNG BAO GIỜ bị chen lên
+    if (status === PrescriptionStatus.PREPARING) {
+      return 100000;
+    }
+
+    // 3. Bị skip (SKIPPED) - ưu tiên cao thứ 3, skipCount nhỏ hơn thì ưu tiên hơn
+    if (status === PrescriptionStatus.SKIPPED) {
+      return 200000 + skipCount; // skipCount nhỏ hơn = ưu tiên cao hơn
+    }
+
+    // 4. Đang trả kết quả (RETURNING) - ưu tiên cao thứ 4
+    if (status === PrescriptionStatus.RETURNING) {
+      return 400000;
+    }
+
+    // 5. Chờ kết quả (WAITING_RESULT) - đứng cuối hàng chờ, càng về sau càng đứng cuối
+    if (status === PrescriptionStatus.WAITING_RESULT) {
+      // Sử dụng timestamp để đảm bảo càng về sau càng đứng cuối
+      // Priority cao (999999999) để đảm bảo đứng cuối, cộng thêm timestamp để sắp xếp theo thời gian
+      // completedAt được truyền qua startedAt parameter (hack để giữ signature)
+      const timestamp = startedAt ? new Date(startedAt).getTime() : Date.now();
+      return 999999999 + timestamp; // Càng về sau timestamp càng lớn = priority càng cao = đứng càng cuối
+    }
+
+    // 6. Người già (>75 tuổi) - ưu tiên cao thứ 6
+    if (patientAge > 75) {
+      priorityScore = 10000000 - patientAge; // Người già hơn ưu tiên hơn
+    }
+    // 7. Trẻ em (<6 tuổi) - ưu tiên cao thứ 7
+    else if (patientAge < 6) {
+      priorityScore = 20000000 - patientAge; // Trẻ em nhỏ hơn ưu tiên hơn
+    }
+    // 8. Người khuyết tật - ưu tiên cao thứ 8
+    else if (isDisabled) {
+      priorityScore = 30000000;
+    }
+    // 9. Người mang thai - ưu tiên cao thứ 9
+    else if (isPregnant) {
+      priorityScore = 40000000;
+    }
+    // 10. Người có lịch hẹn - ưu tiên cao thứ 10
+    else if (hasAppointment) {
+      priorityScore = 50000000;
+    }
+    // 11. Người thường - ưu tiên thấp nhất
+    else {
+      priorityScore = 60000000;
+    }
+
+    // Trong cùng nhóm ưu tiên, ai đến trước (order nhỏ hơn) thì ưu tiên hơn
+    return priorityScore + order;
+  }
+
+  async getQueueForUser(user: JwtUserPayload): Promise<QueueResponseDto> {
+    // Lấy queue từ Redis cho user cụ thể
+    let userId = user.role === 'DOCTOR' ? user.doctor?.id : user.technician?.id;
+    
+    // Fallback: Nếu userId không có trong JWT (do token cũ), lấy từ database
+    if (!userId && user.id) {
+      if (user.role === 'DOCTOR') {
+        const doctor = await this.prisma.doctor.findUnique({
+          where: { authId: user.id },
+          select: { id: true },
+        });
+        userId = doctor?.id;
+      } else if (user.role === 'TECHNICIAN') {
+        const technician = await this.prisma.technician.findUnique({
+          where: { authId: user.id },
+          select: { id: true },
+        });
+        userId = technician?.id;
+      }
+    }
+    
+    console.log(`[getQueueForUser] User role: ${user.role}, userId: ${userId}`);
+    console.log(`[getQueueForUser] User object:`, JSON.stringify({
+      id: user.id,
+      role: user.role,
+      doctor: user.doctor,
+      technician: user.technician,
+    }, null, 2));
+    
+    if (!userId) {
+      console.warn(`[getQueueForUser] No userId found for role ${user.role}`);
+      return { patients: [], totalCount: 0 };
+    }
+
+    const queueKey = `prescriptionQueue:${user.role.toLowerCase()}:${userId}`;
+
+    try {
+      // Lấy queue từ Redis ZSET (đã được sắp xếp theo priority)
+      const queueData = await this.redis.getPrescriptionQueue(
+        userId,
+        user.role as 'DOCTOR' | 'TECHNICIAN',
+      );
+
+      if (!queueData || queueData.length === 0) {
+        // Nếu không có queue trong Redis, tạo queue mới từ database
+        return await this.buildQueueFromDatabase(user);
+      }
+
+      // Chuyển đổi dữ liệu từ Redis thành format response
+      const patients = queueData.map((item, index) => ({
+        patientProfileId: item.patientProfileId,
+        patientName: item.patientName,
+        prescriptionCode: item.prescriptionCode,
+        services: item.services,
+        overallStatus: item.overallStatus,
+        queueOrder: index + 1,
+      }));
+
+      return {
+        patients,
+        totalCount: patients.length,
+      };
+    } catch (error) {
+      console.warn(
+        'Error getting queue from Redis, falling back to database:',
+        error,
+      );
+      return await this.buildQueueFromDatabase(user);
+    }
+  }
+
+  /**
+   * Xây dựng queue từ database (fallback method)
+   */
+  private async buildQueueFromDatabase(
+    user: JwtUserPayload,
+  ): Promise<QueueResponseDto> {
+    // Lấy tất cả PrescriptionService có trạng thái đang chờ
+    const queueStatuses = [
+      PrescriptionStatus.WAITING,
+      PrescriptionStatus.PREPARING,
+      PrescriptionStatus.SERVING,
+      PrescriptionStatus.SKIPPED,
+      PrescriptionStatus.WAITING_RESULT,
+      PrescriptionStatus.RETURNING,
+    ];
+
+    // Build where condition
+    const whereCondition: any = {
+      status: { in: queueStatuses },
+    };
+    
+    // Lấy userId từ JWT hoặc từ database nếu không có trong JWT
+    let userId: string | undefined;
+    if (user.role === 'DOCTOR') {
+      userId = user.doctor?.id;
+      if (!userId && user.id) {
+        const doctor = await this.prisma.doctor.findUnique({
+          where: { authId: user.id },
+          select: { id: true },
+        });
+        userId = doctor?.id;
+      }
+      if (userId) {
+        whereCondition.doctorId = userId;
+      }
+    } else if (user.role === 'TECHNICIAN') {
+      userId = user.technician?.id;
+      if (!userId && user.id) {
+        const technician = await this.prisma.technician.findUnique({
+          where: { authId: user.id },
+          select: { id: true },
+        });
+        userId = technician?.id;
+      }
+      if (userId) {
+        whereCondition.technicianId = userId;
+      }
+    }
+    
+    console.log(`[buildQueueFromDatabase] User role: ${user.role}, userId: ${userId}`);
+    console.log(`[buildQueueFromDatabase] Where condition:`, JSON.stringify(whereCondition, null, 2));
+    
+    const prescriptionServices = await this.prisma.prescriptionService.findMany(
+      {
+        where: whereCondition,
+        include: {
+          prescription: {
+            include: {
+              patientProfile: {
+                select: {
+                  id: true,
+                  name: true,
+                  dateOfBirth: true,
+                  gender: true,
+                  isPregnant: true,
+                  isDisabled: true,
+                },
+              },
+              medicalRecord: {
+                select: {
+                  appointment: {
+                    select: {
+                      appointmentCode: true,
+                      date: true,
+                      startTime: true,
+                      endTime: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          service: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: [{ order: 'asc' }, { prescription: { id: 'asc' } }],
+      },
+    );
+
+    console.log(`[buildQueueFromDatabase] Found ${prescriptionServices.length} prescription services`);
+    if (prescriptionServices.length > 0) {
+      console.log(`[buildQueueFromDatabase] First service sample:`, JSON.stringify({
+        id: prescriptionServices[0].id,
+        status: prescriptionServices[0].status,
+        doctorId: prescriptionServices[0].doctorId,
+        technicianId: prescriptionServices[0].technicianId,
+        prescriptionCode: prescriptionServices[0].prescription.prescriptionCode,
+      }, null, 2));
+    }
+
+    // Gom nhóm theo bệnh nhân và tính toán độ ưu tiên
+    const patientMap = new Map<string, any>();
+
+    prescriptionServices.forEach((ps) => {
+      const patientProfileId = ps.prescription.patientProfileId;
+      const patientName = ps.prescription.patientProfile.name;
+      const prescriptionCode = ps.prescription.prescriptionCode;
+      const patientProfile = ps.prescription.patientProfile;
+      const appointment = ps.prescription.medicalRecord?.appointment;
+
+      if (!patientMap.has(patientProfileId)) {
+        // Tính toán thông tin ưu tiên cho bệnh nhân
+        const age = this.calculateAge(patientProfile.dateOfBirth);
+        const isPregnant = patientProfile.isPregnant || false;
+        const isDisabled = patientProfile.isDisabled || false;
+        const hasAppointment = !!appointment;
+        const isOnTime = this.calculateIsOnTime(hasAppointment, appointment);
+
+        patientMap.set(patientProfileId, {
+          patientProfileId,
+          patientName,
+          prescriptionCode,
+          services: [],
+          minOrder: ps.order,
+          priorities: [],
+          // Thông tin ưu tiên
+          age,
+          isPregnant,
+          isDisabled,
+          hasAppointment,
+          isOnTime,
+          earliestStartedAt: ps.startedAt,
+          earliestCompletedAt:
+            ps.status === PrescriptionStatus.WAITING_RESULT
+              ? ps.completedAt
+              : null,
+          minSkipCount: ps.skipCount || 0,
+        });
+      }
+
+      const patient = patientMap.get(patientProfileId);
+      patient.services.push({
+        prescriptionId: ps.prescriptionId,
+        serviceId: ps.serviceId,
+        serviceName: ps.service.name,
+        order: ps.order,
+        status: ps.status,
+        note: ps.note,
+        startedAt: ps.startedAt,
+        completedAt: ps.completedAt,
+        skipCount: ps.skipCount || 0,
+      });
+
+      // Cập nhật order nhỏ nhất
+      if (ps.order < patient.minOrder) {
+        patient.minOrder = ps.order;
+      }
+
+      // Cập nhật thời gian bắt đầu sớm nhất
+      if (
+        ps.startedAt &&
+        (!patient.earliestStartedAt || ps.startedAt < patient.earliestStartedAt)
+      ) {
+        patient.earliestStartedAt = ps.startedAt;
+      }
+
+      // Cập nhật thời gian hoàn thành sớm nhất cho WAITING_RESULT
+      if (ps.status === PrescriptionStatus.WAITING_RESULT && ps.completedAt) {
+        if (
+          !patient.earliestCompletedAt ||
+          ps.completedAt < patient.earliestCompletedAt
+        ) {
+          patient.earliestCompletedAt = ps.completedAt;
+        }
+      }
+
+      // Cập nhật skipCount nhỏ nhất
+      if ((ps.skipCount || 0) < patient.minSkipCount) {
+        patient.minSkipCount = ps.skipCount || 0;
+      }
+
+      // Tính toán độ ưu tiên cho từng dịch vụ
+      // Với WAITING_RESULT, sử dụng completedAt thay vì startedAt để sắp xếp theo thời gian hoàn thành
+      const timeForPriority =
+        ps.status === PrescriptionStatus.WAITING_RESULT && ps.completedAt
+          ? ps.completedAt
+          : ps.startedAt;
+      const servicePriority = this.calculateServicePriority(
+        ps.status,
+        patient.age,
+        patient.isDisabled,
+        patient.isPregnant,
+        patient.hasAppointment,
+        ps.order,
+        timeForPriority,
+        ps.skipCount || 0,
+      );
+
+      patient.priorities.push(servicePriority);
+    });
+
+    // Chuyển đổi thành array và sắp xếp theo độ ưu tiên
+    const patients = Array.from(patientMap.values()).map((patient) => {
+      // Lấy trạng thái có độ ưu tiên cao nhất
+      const highestPriorityStatus = Math.min(...patient.priorities);
+
+      // Xác định overallStatus dựa trên priority score
+      let overallStatus: QueuePatientDto['overallStatus'] = 'WAITING';
+
+      if (highestPriorityStatus === 0) {
+        overallStatus = 'SERVING';
+      } else if (
+        highestPriorityStatus >= 100000 &&
+        highestPriorityStatus < 200000
+      ) {
+        overallStatus = 'PREPARING';
+      } else if (
+        highestPriorityStatus >= 200000 &&
+        highestPriorityStatus < 300000
+      ) {
+        overallStatus = 'SKIPPED';
+      } else if (
+        highestPriorityStatus >= 400000 &&
+        highestPriorityStatus < 500000
+      ) {
+        overallStatus = 'RETURNING';
+      } else if (highestPriorityStatus >= 999999999) {
+        overallStatus = 'WAITING_RESULT';
+      } else {
+        overallStatus = 'WAITING';
+      }
+
+      return {
+        patientProfileId: patient.patientProfileId,
+        patientName: patient.patientName,
+        prescriptionCode: patient.prescriptionCode,
+        services: patient.services.sort((a, b) => a.order - b.order),
+        overallStatus,
+        queueOrder: 0, // Sẽ được cập nhật sau khi sắp xếp
+        // Thông tin ưu tiên để sắp xếp
+        priorityScore: Math.min(...patient.priorities),
+        earliestStartedAt: patient.earliestStartedAt,
+        earliestCompletedAt: patient.earliestCompletedAt,
+        age: patient.age,
+        isPregnant: patient.isPregnant,
+        isDisabled: patient.isDisabled,
+        hasAppointment: patient.hasAppointment,
+        isOnTime: patient.isOnTime,
+        skipCount: patient.minSkipCount,
+      };
+    });
+
+    // Sắp xếp theo độ ưu tiên: SERVING và PREPARING luôn ở đầu, WAITING_RESULT luôn ở cuối
+    patients.sort((a, b) => {
+      // WAITING_RESULT luôn ở vị trí cuối cùng
+      if (
+        a.overallStatus === 'WAITING_RESULT' &&
+        b.overallStatus !== 'WAITING_RESULT'
+      )
+        return 1;
+      if (
+        b.overallStatus === 'WAITING_RESULT' &&
+        a.overallStatus !== 'WAITING_RESULT'
+      )
+        return -1;
+
+      // Nếu cả hai đều là WAITING_RESULT, sắp xếp theo thời gian hoàn thành (càng về sau càng đứng cuối)
+      if (
+        a.overallStatus === 'WAITING_RESULT' &&
+        b.overallStatus === 'WAITING_RESULT'
+      ) {
+        const aTime = (a as any).earliestCompletedAt
+          ? new Date((a as any).earliestCompletedAt).getTime()
+          : a.earliestStartedAt
+            ? new Date(a.earliestStartedAt).getTime()
+            : 0;
+        const bTime = (b as any).earliestCompletedAt
+          ? new Date((b as any).earliestCompletedAt).getTime()
+          : b.earliestStartedAt
+            ? new Date(b.earliestStartedAt).getTime()
+            : 0;
+        return aTime - bTime; // Thời gian sớm hơn đứng trước (càng về sau càng đứng cuối)
+      }
+
+      // SERVING luôn ở vị trí đầu tiên
+      if (a.overallStatus === 'SERVING' && b.overallStatus !== 'SERVING')
+        return -1;
+      if (b.overallStatus === 'SERVING' && a.overallStatus !== 'SERVING')
+        return 1;
+
+      // PREPARING luôn ở vị trí thứ 2 (sau SERVING)
+      if (
+        a.overallStatus === 'PREPARING' &&
+        b.overallStatus !== 'PREPARING' &&
+        b.overallStatus !== 'SERVING'
+      )
+        return -1;
+      if (
+        b.overallStatus === 'PREPARING' &&
+        a.overallStatus !== 'PREPARING' &&
+        a.overallStatus !== 'SERVING'
+      )
+        return 1;
+
+      // Các trạng thái khác sắp xếp theo priorityScore
+      if (a.priorityScore !== b.priorityScore) {
+        return a.priorityScore - b.priorityScore;
+      }
+
+      // Nếu cùng priorityScore, sắp xếp theo startedAt (sớm hơn = ưu tiên cao hơn)
+      if (a.earliestStartedAt && b.earliestStartedAt) {
+        return (
+          new Date(a.earliestStartedAt).getTime() -
+          new Date(b.earliestStartedAt).getTime()
+        );
+      }
+
+      // Nếu một trong hai không có startedAt, ưu tiên cái có startedAt
+      if (a.earliestStartedAt && !b.earliestStartedAt) return -1;
+      if (!a.earliestStartedAt && b.earliestStartedAt) return 1;
+
+      // Nếu cả hai đều không có startedAt, sắp xếp theo patientProfileId
+      return a.patientProfileId.localeCompare(b.patientProfileId);
+    });
+
+    // Cập nhật lại queueOrder sau khi sắp xếp
+    patients.forEach((patient, index) => {
+      patient.queueOrder = index + 1;
+      // Xóa các trường tạm thời không cần thiết cho response
+      if ('priorityScore' in patient) delete (patient as any).priorityScore;
+      if ('earliestStartedAt' in patient)
+        delete (patient as any).earliestStartedAt;
+      if ('age' in patient) delete (patient as any).age;
+      if ('isPregnant' in patient) delete (patient as any).isPregnant;
+      if ('isDisabled' in patient) delete (patient as any).isDisabled;
+      if ('hasAppointment' in patient) delete (patient as any).hasAppointment;
+      if ('isOnTime' in patient) delete (patient as any).isOnTime;
+      if ('skipCount' in patient) delete (patient as any).skipCount;
+    });
+
+    return {
+      patients,
+      totalCount: patients.length,
+    };
+  }
+
+  /**
+   * Cập nhật queue vào Redis cho user cụ thể
+   */
+  async updateQueueInRedis(
+    userId: string,
+    userRole: 'DOCTOR' | 'TECHNICIAN',
+  ): Promise<void> {
+    try {
+      // Lấy dữ liệu queue từ database
+      const queueData = await this.buildQueueFromDatabase({
+        id: userId,
+        role: userRole,
+        doctor: userRole === 'DOCTOR' ? { id: userId } : undefined,
+        technician: userRole === 'TECHNICIAN' ? { id: userId } : undefined,
+      } as JwtUserPayload);
+
+      // Chuyển đổi thành format cho Redis với priority được tính lại để đảm bảo SERVING/PREPARING ở đầu, WAITING_RESULT ở cuối
+      const redisQueueData = queueData.patients.map((patient, index) => {
+        // Tính lại priority để đảm bảo SERVING và PREPARING luôn ở đầu, WAITING_RESULT ở cuối
+        let redisPriority = this.calculatePatientPriority(patient);
+
+        // Đảm bảo SERVING và PREPARING có priority cao nhất
+        if (patient.overallStatus === 'SERVING') {
+          redisPriority = 0;
+        } else if (patient.overallStatus === 'PREPARING') {
+          redisPriority = 100000;
+        } else if (patient.overallStatus === 'WAITING_RESULT') {
+          // WAITING_RESULT: đảm bảo đứng cuối, càng về sau càng đứng cuối
+          // Ưu tiên dùng completedAt nếu có, nếu không thì dùng startedAt
+          const patientAny = patient as any;
+          const completedAt =
+            patientAny.earliestCompletedAt || patientAny.earliestStartedAt;
+          const timestamp = completedAt
+            ? new Date(completedAt).getTime()
+            : Date.now();
+          redisPriority = 999999999 + timestamp;
+        }
+
+        return {
+          patientProfileId: patient.patientProfileId,
+          patientName: patient.patientName,
+          prescriptionCode: patient.prescriptionCode,
+          services: patient.services,
+          overallStatus: patient.overallStatus,
+          queueOrder: index + 1,
+          priorityScore: redisPriority,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      // Lưu vào Redis ZSET
+      await this.redis.updatePrescriptionQueue(
+        userId,
+        userRole,
+        redisQueueData,
+      );
+    } catch (error) {
+      console.warn('Error updating queue in Redis:', error);
+    }
+  }
+
+  /**
+   * Tính toán priority cho bệnh nhân để sắp xếp trong Redis
+   */
+  private calculatePatientPriority(patient: any): number {
+    // Sử dụng logic tương tự như calculateServicePriority
+    const status = patient.overallStatus;
+    const age = patient.age || 0;
+    const isDisabled = patient.isDisabled || false;
+    const isPregnant = patient.isPregnant || false;
+    const hasAppointment = patient.hasAppointment || false;
+    const order = patient.queueOrder || 0;
+    const skipCount = patient.skipCount || 0;
+
+    return this.calculateServicePriority(
+      status as PrescriptionStatus,
+      age,
+      isDisabled,
+      isPregnant,
+      hasAppointment,
+      order,
+      null,
+      skipCount,
+    );
+  }
+
+  /**
+   * Thêm bệnh nhân vào queue Redis
+   */
+  async addPatientToQueue(
+    userId: string,
+    userRole: 'DOCTOR' | 'TECHNICIAN',
+    patientData: any,
+  ): Promise<void> {
+    try {
+      await this.redis.addToPrescriptionQueue(userId, userRole, patientData);
+    } catch (error) {
+      console.warn('Error adding patient to queue:', error);
+    }
+  }
+
+  /**
+   * Xóa bệnh nhân khỏi queue Redis
+   */
+  async removePatientFromQueue(
+    userId: string,
+    userRole: 'DOCTOR' | 'TECHNICIAN',
+    patientProfileId: string,
+  ): Promise<void> {
+    try {
+      await this.redis.removeFromPrescriptionQueue(
+        userId,
+        userRole,
+        patientProfileId,
+      );
+    } catch (error) {
+      console.warn('Error removing patient from queue:', error);
+    }
+  }
+
+  /**
+   * Cập nhật trạng thái bệnh nhân trong queue Redis
+   */
+  async updatePatientStatusInQueue(
+    userId: string,
+    userRole: 'DOCTOR' | 'TECHNICIAN',
+    patientProfileId: string,
+    newStatus: string,
+  ): Promise<void> {
+    try {
+      await this.redis.updatePrescriptionQueueStatus(
+        userId,
+        userRole,
+        patientProfileId,
+        newStatus,
+      );
+    } catch (error) {
+      console.warn('Error updating patient status in queue:', error);
+    }
+  }
+
+  /**
+   * Chuyển các PrescriptionService từ PENDING sang WAITING và thêm vào queue
+   */
+  async startServices(
+    dto: StartServicesDto,
+    user?: JwtUserPayload,
+  ): Promise<StartServicesResponseDto> {
+    const startedServices: any[] = [];
+    const failedServices: any[] = [];
+    const startedAt = new Date();
+
+    // Xử lý từng service
+    for (const serviceToStart of dto.services) {
+      try {
+        const result = await this.startSingleService(
+          serviceToStart.prescriptionId,
+          serviceToStart.serviceId,
+          user,
+          startedAt,
+        );
+
+        if (result.success) {
+          startedServices.push({
+            prescriptionId: serviceToStart.prescriptionId,
+            serviceId: serviceToStart.serviceId,
+            status: 'WAITING',
+            startedAt: startedAt.toISOString(),
+          });
+        } else {
+          failedServices.push({
+            prescriptionId: serviceToStart.prescriptionId,
+            serviceId: serviceToStart.serviceId,
+            reason: result.reason,
+          });
+        }
+      } catch (error) {
+        failedServices.push({
+          prescriptionId: serviceToStart.prescriptionId,
+          serviceId: serviceToStart.serviceId,
+          reason: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      startedServices,
+      failedServices,
+      totalStarted: startedServices.length,
+      totalFailed: failedServices.length,
+    };
+  }
+
+  /**
+   * Chuyển một PrescriptionService từ PENDING sang WAITING
+   */
+  private async startSingleService(
+    prescriptionId: string,
+    serviceId: string,
+    user: JwtUserPayload | undefined,
+    startedAt: Date,
+  ): Promise<{ success: boolean; reason?: string }> {
+    try {
+      // Tìm PrescriptionService
+      const prescriptionService =
+        await this.prisma.prescriptionService.findUnique({
+          where: {
+            prescriptionId_serviceId: {
+              prescriptionId,
+              serviceId,
+            },
+          },
+          include: {
+            prescription: {
+              select: {
+                doctorId: true,
+                patientProfileId: true,
+              },
+            },
+          },
+        });
+
+      if (!prescriptionService) {
+        return {
+          success: false,
+          reason: 'PrescriptionService not found',
+        };
+      }
+
+      // Kiểm tra quyền truy cập
+      if (
+        user?.role === 'DOCTOR' &&
+        prescriptionService.prescription.doctorId !== user.doctor?.id
+      ) {
+        return {
+          success: false,
+          reason: 'You can only start services in prescriptions you created',
+        };
+      }
+
+      if (
+        user?.role === 'TECHNICIAN' &&
+        prescriptionService.technicianId !== user.technician?.id
+      ) {
+        return {
+          success: false,
+          reason: 'You can only start services assigned to you',
+        };
+      }
+
+      // Kiểm tra trạng thái hiện tại
+      if (
+        prescriptionService.status !== PrescriptionStatus.PENDING &&
+        prescriptionService.status !== PrescriptionStatus.NOT_STARTED
+      ) {
+        return {
+          success: false,
+          reason: `Service is not in PENDING/NOT_STARTED status. Current status: ${prescriptionService.status}`,
+        };
+      }
+
+      // Cập nhật trạng thái sang WAITING
+      await this.prisma.prescriptionService.update({
+        where: {
+          prescriptionId_serviceId: {
+            prescriptionId,
+            serviceId,
+          },
+        },
+        data: {
+          status: PrescriptionStatus.WAITING,
+          startedAt,
+        },
+      });
+
+      // Cập nhật queue trong Redis cho doctor
+      if (prescriptionService.prescription.doctorId) {
+        await this.updateQueueInRedis(
+          prescriptionService.prescription.doctorId,
+          'DOCTOR',
+        );
+      }
+
+      // Cập nhật queue trong Redis cho technician nếu có
+      if (prescriptionService.technicianId) {
+        await this.updateQueueInRedis(
+          prescriptionService.technicianId,
+          'TECHNICIAN',
+        );
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error starting service:', error);
+      return {
+        success: false,
+        reason: `Database error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  }
+
+  /**
+   * Lấy các dịch vụ PENDING và RESCHEDULED liên tiếp có cùng bác sĩ/kỹ thuật viên thực hiện
+   */
+  async getPendingServicesByPrescriptionCode(
+    prescriptionCode: string,
+  ): Promise<PendingServicesResponseDto> {
+    try {
+      // Tìm prescription theo mã
+      let prescription = await this.prisma.prescription.findFirst({
+        where: { prescriptionCode },
+        include: {
+          services: {
+            where: {
+              status: {
+                in: [
+                  PrescriptionStatus.NOT_STARTED,
+                  PrescriptionStatus.PENDING,
+                  PrescriptionStatus.RESCHEDULED,
+                  PrescriptionStatus.WAITING_RESULT,
+                ],
+              },
+            },
+            include: {
+              service: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+              doctor: {
+                select: {
+                  id: true,
+                  doctorCode: true,
+                  auth: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
+              technician: {
+                select: {
+                  id: true,
+                  technicianCode: true,
+                  auth: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: { order: 'asc' },
+          },
+        },
+      });
+
+      if (!prescription) {
+        throw new NotFoundException('Prescription not found');
+      }
+
+      // TEST_MODE: nếu chưa có dịch vụ nào chờ, tạo 1 dịch vụ demo để dễ test flow
+      if (prescription.services.length === 0 && this.TEST_MODE) {
+        const demoService = await this.prisma.service.findFirst({
+          where: { isActive: true },
+          orderBy: { name: 'asc' },
+        });
+
+        if (demoService) {
+          await this.prisma.prescriptionService.create({
+            data: {
+              prescriptionId: prescription.id,
+              serviceId: demoService.id,
+              status: PrescriptionStatus.PENDING,
+              results: [],
+              order: 1,
+            },
+          });
+
+          // Nạp lại prescription với danh sách services mới
+          prescription = await this.prisma.prescription.findFirst({
+            where: { id: prescription.id },
+            include: {
+              services: {
+                where: {
+                  status: {
+                    in: [
+                      PrescriptionStatus.PENDING,
+                      PrescriptionStatus.RESCHEDULED,
+                      PrescriptionStatus.WAITING_RESULT,
+                    ],
+                  },
+                },
+                include: {
+                  service: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
+                  },
+                  doctor: {
+                    select: {
+                      id: true,
+                      doctorCode: true,
+                      auth: {
+                        select: {
+                          name: true,
+                        },
+                      },
+                    },
+                  },
+                  technician: {
+                    select: {
+                      id: true,
+                      technicianCode: true,
+                      auth: {
+                        select: {
+                          name: true,
+                        },
+                      },
+                    },
+                  },
+                },
+                orderBy: { order: 'asc' },
+              },
+            },
+          });
+        }
+      }
+
+      if (!prescription || prescription.services.length === 0) {
+        return {
+          prescriptionId: prescription?.id ?? '',
+          prescriptionCode,
+          services: [],
+          status: 'PENDING',
+          totalCount: 0,
+        };
+      }
+
+      // Tìm nhóm dịch vụ PENDING/RESCHEDULED liên tiếp có cùng bác sĩ/kỹ thuật viên
+      const consecutiveServices = this.findConsecutivePendingServices(
+        prescription.services,
+      );
+
+      // Kiểm tra work session cho các dịch vụ RESCHEDULED
+      const now = new Date();
+      const services: PendingServiceDto[] = await Promise.all(
+        consecutiveServices.map(async (ps) => {
+          const isRescheduled = ps.status === PrescriptionStatus.RESCHEDULED;
+          let isDoctorNotWorking = false;
+          let isTechnicianNotWorking = false;
+
+          // Nếu là RESCHEDULED và có doctorId hoặc technicianId, kiểm tra work session
+          if (isRescheduled) {
+            if (ps.doctorId) {
+              const activeWorkSession = await this.prisma.workSession.findFirst({
+                where: {
+                  doctorId: ps.doctorId,
+                  status: WorkSessionStatus.IN_PROGRESS,
+                  startTime: { lte: now },
+                  endTime: { gte: now },
+                },
+              });
+              isDoctorNotWorking = !activeWorkSession;
+            }
+
+            if (ps.technicianId) {
+              const activeWorkSession = await this.prisma.workSession.findFirst({
+                where: {
+                  technicianId: ps.technicianId,
+                  status: WorkSessionStatus.IN_PROGRESS,
+                  startTime: { lte: now },
+                  endTime: { gte: now },
+                },
+              });
+              isTechnicianNotWorking = !activeWorkSession;
+            }
+          }
+
+          const isWaitingResult = ps.status === PrescriptionStatus.WAITING_RESULT;
+          const statusString =
+            isWaitingResult
+              ? 'WAITING_RESULT'
+              : isRescheduled
+                ? 'RESCHEDULED'
+                : 'PENDING';
+
+          return {
+            prescriptionServiceId: ps.id,
+            serviceId: ps.serviceId,
+            serviceName: ps.service.name,
+            status: statusString,
+            doctorId: ps.doctorId,
+            technicianId: ps.technicianId,
+            doctorName: ps.doctor?.auth?.name || null,
+            technicianName: ps.technician?.auth?.name || null,
+            isDoctorNotWorking: isRescheduled && ps.doctorId ? isDoctorNotWorking : undefined,
+            isTechnicianNotWorking:
+              isRescheduled && ps.technicianId
+                ? isTechnicianNotWorking
+                : undefined,
+          };
+        }),
+      );
+
+      // Xác định status tổng thể
+      const hasPending = services.some((s) => s.status === 'PENDING');
+      const hasRescheduled = services.some((s) => s.status === 'RESCHEDULED');
+      const hasWaitingResult = services.some((s) => s.status === 'WAITING_RESULT');
+      
+      const statusCount = [hasPending, hasRescheduled, hasWaitingResult].filter(Boolean).length;
+      const overallStatus: 'PENDING' | 'RESCHEDULED' | 'WAITING_RESULT' | 'MIXED' =
+        statusCount > 1
+          ? 'MIXED'
+          : hasWaitingResult
+            ? 'WAITING_RESULT'
+            : hasRescheduled
+              ? 'RESCHEDULED'
+              : 'PENDING';
+
+      return {
+        prescriptionId: prescription.id,
+        prescriptionCode,
+        services,
+        status: overallStatus,
+        totalCount: services.length,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      console.error('Error getting pending services:', error);
+      throw new BadRequestException('Failed to get pending services');
+    }
+  }
+
+  /**
+   * Tìm các dịch vụ PENDING, RESCHEDULED hoặc WAITING_RESULT liên tiếp có cùng bác sĩ/kỹ thuật viên
+   * Cho phép các trạng thái này trong cùng một nhóm nếu có cùng assignee
+   */
+  private findConsecutivePendingServices(services: any[]): any[] {
+    if (services.length === 0) return [];
+
+    const result: any[] = [];
+    let currentGroup: any[] = [];
+    let currentDoctorId: string | null = null;
+    let currentTechnicianId: string | null = null;
+
+    for (const service of services) {
+      const serviceDoctorId = service.doctorId;
+      const serviceTechnicianId = service.technicianId;
+      const serviceStatus = service.status;
+
+      // Chỉ xử lý PENDING, RESCHEDULED và WAITING_RESULT
+      if (
+        serviceStatus !== PrescriptionStatus.PENDING &&
+        serviceStatus !== PrescriptionStatus.RESCHEDULED &&
+        serviceStatus !== PrescriptionStatus.WAITING_RESULT
+      ) {
+        continue;
+      }
+
+      // Kiểm tra xem có cùng bác sĩ/kỹ thuật viên với nhóm hiện tại không
+      const isSameAssignee =
+        (serviceDoctorId && serviceDoctorId === currentDoctorId) ||
+        (serviceTechnicianId && serviceTechnicianId === currentTechnicianId) ||
+        (!serviceDoctorId &&
+          !serviceTechnicianId &&
+          !currentDoctorId &&
+          !currentTechnicianId);
+
+      if (isSameAssignee) {
+        // Thêm vào nhóm hiện tại (có thể là PENDING hoặc RESCHEDULED)
+        currentGroup.push(service);
+        currentDoctorId = serviceDoctorId;
+        currentTechnicianId = serviceTechnicianId;
+      } else {
+        // Nếu nhóm hiện tại có ít nhất 1 dịch vụ, lưu lại
+        if (currentGroup.length > 0) {
+          result.push(...currentGroup);
+        }
+
+        // Bắt đầu nhóm mới
+        currentGroup = [service];
+        currentDoctorId = serviceDoctorId;
+        currentTechnicianId = serviceTechnicianId;
+      }
+    }
+
+    // Thêm nhóm cuối cùng nếu có
+    if (currentGroup.length > 0) {
+      result.push(...currentGroup);
+    }
+
+    return result;
+  }
+
+  /**
+   * Gọi bệnh nhân tiếp theo trong queue
+   * Logic:
+   * 1. Lấy bệnh nhân đầu queue
+   * 2. Nếu không phải SERVING → cập nhật thành SERVING
+   * 3. Cập nhật bệnh nhân đang SERVING thành COMPLETED và xóa khỏi queue
+   * 4. Cập nhật bệnh nhân tiếp theo thành PREPARING
+   */
+  async callNextPatient(user: JwtUserPayload): Promise<{
+    success: boolean;
+    currentPatient?: any;
+    nextPatient?: any;
+    preparingPatient?: any;
+    message: string;
+  }> {
+    try {
+      const userId =
+        user.role === 'DOCTOR' ? user.doctor?.id : user.technician?.id;
+      if (!userId) {
+        throw new BadRequestException('User ID not found');
+      }
+
+      // Lấy queue hiện tại từ database để đảm bảo dữ liệu chính xác
+      const queueData = await this.buildQueueFromDatabase(user);
+
+      if (queueData.patients.length === 0) {
+        return {
+          success: false,
+          message: 'Không có bệnh nhân nào trong hàng chờ',
+        };
+      }
+
+      // Lấy bệnh nhân đầu queue (ưu tiên cao nhất)
+      const nextPatient = queueData.patients[0];
+
+      // Tìm bệnh nhân đang SERVING hiện tại
+      const currentServingPatient = queueData.patients.find(
+        (p) => p.overallStatus === 'SERVING',
+      );
+
+      // Tìm bệnh nhân tiếp theo để chuẩn bị (PREPARING)
+      // Logic:
+      // - Nếu có bệnh nhân SERVING hiện tại: bệnh nhân tiếp theo sau SERVING sẽ là PREPARING
+      // - Nếu không có bệnh nhân SERVING: bệnh nhân đầu queue sẽ thành SERVING, bệnh nhân thứ 2 sẽ thành PREPARING
+      let preparingPatient: any = null;
+
+      if (currentServingPatient) {
+        // Nếu có bệnh nhân SERVING, tìm bệnh nhân tiếp theo sau SERVING
+        const servingIndex = queueData.patients.findIndex(
+          (p) => p.overallStatus === 'SERVING',
+        );
+        preparingPatient = queueData.patients[servingIndex + 1] || null;
+      } else {
+        // Nếu không có bệnh nhân SERVING, bệnh nhân thứ 2 sẽ là PREPARING
+        preparingPatient =
+          queueData.patients.length > 1 ? queueData.patients[1] : null;
+      }
+
+      // Thực hiện các cập nhật trong transaction
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Cập nhật bệnh nhân đang SERVING thành COMPLETED (nếu có)
+        if (currentServingPatient) {
+          for (const service of currentServingPatient.services) {
+            if (service.status === 'SERVING') {
+              await tx.prescriptionService.update({
+                where: {
+                  prescriptionId_serviceId: {
+                    prescriptionId: service.prescriptionId,
+                    serviceId: service.serviceId,
+                  },
+                },
+                data: {
+                  status: PrescriptionStatus.COMPLETED,
+                  completedAt: new Date(),
+                },
+              });
+            }
+          }
+        }
+
+        // 2. Cập nhật bệnh nhân tiếp theo thành SERVING
+        // Nếu không có bệnh nhân SERVING hiện tại, thì bệnh nhân đầu queue sẽ thành SERVING
+        // Nếu có bệnh nhân SERVING hiện tại, thì bệnh nhân đầu queue sẽ thành SERVING (thay thế)
+        for (const service of nextPatient.services) {
+          if (
+            service.status === 'WAITING' ||
+            service.status === 'SKIPPED' ||
+            service.status === 'PREPARING' ||
+            service.status === 'RETURNING'
+          ) {
+            await tx.prescriptionService.update({
+              where: {
+                prescriptionId_serviceId: {
+                  prescriptionId: service.prescriptionId,
+                  serviceId: service.serviceId,
+                },
+              },
+              data: {
+                status: PrescriptionStatus.SERVING,
+                startedAt: new Date(),
+              },
+            });
+          }
+        }
+
+        // 3. Cập nhật bệnh nhân tiếp theo thành PREPARING (nếu có)
+        if (
+          preparingPatient &&
+          preparingPatient.patientProfileId !== nextPatient.patientProfileId
+        ) {
+          for (const service of preparingPatient.services) {
+            if (
+              service.status === 'WAITING' || 
+              service.status === 'SKIPPED' ||
+              service.status === 'RETURNING'
+            ) {
+              await tx.prescriptionService.update({
+                where: {
+                  prescriptionId_serviceId: {
+                    prescriptionId: service.prescriptionId,
+                    serviceId: service.serviceId,
+                  },
+                },
+                data: {
+                  status: PrescriptionStatus.PREPARING,
+                },
+              });
+            }
+          }
+        }
+      });
+
+      // Cập nhật queue trong Redis
+      await this.updateQueueInRedis(
+        userId,
+        user.role as 'DOCTOR' | 'TECHNICIAN',
+      );
+
+      // Gửi WebSocket notification cho hành động gọi bệnh nhân
+      await this.notifyPatientAction({
+        action: 'CALLED',
+        currentPatient: currentServingPatient,
+        nextPatient,
+        preparingPatient,
+        doctorId: user.role === 'DOCTOR' ? userId : undefined,
+        technicianId: user.role === 'TECHNICIAN' ? userId : undefined,
+      });
+
+      return {
+        success: true,
+        currentPatient: currentServingPatient
+          ? {
+              patientProfileId: currentServingPatient.patientProfileId,
+              patientName: currentServingPatient.patientName,
+              prescriptionCode: currentServingPatient.prescriptionCode,
+              status: 'COMPLETED',
+            }
+          : null,
+        nextPatient: {
+          patientProfileId: nextPatient.patientProfileId,
+          patientName: nextPatient.patientName,
+          prescriptionCode: nextPatient.prescriptionCode,
+          status: 'SERVING',
+        },
+        preparingPatient: preparingPatient
+          ? {
+              patientProfileId: preparingPatient.patientProfileId,
+              patientName: preparingPatient.patientName,
+              prescriptionCode: preparingPatient.prescriptionCode,
+              status: 'PREPARING',
+            }
+          : null,
+        message: `Đã gọi bệnh nhân: ${nextPatient.patientName}`,
+      };
+    } catch (error) {
+      console.error('Error calling next patient:', error);
+      return {
+        success: false,
+        message: `Lỗi khi gọi bệnh nhân: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  }
+
+  // ==================== WEBSOCKET NOTIFICATION METHODS ====================
+
+  /**
+   * Thông báo bệnh nhân mới đến
+   */
+  private async notifyNewPatientArrival(prescription: any): Promise<void> {
+    try {
+      // Lấy thông tin về các phòng và buồng liên quan
+      const serviceIds = prescription.services.map((s: any) => s.serviceId);
+      const { clinicRoomIds, boothIds } =
+        await this.getRelatedRoomsAndBooths(serviceIds);
+
+      await this.webSocketService.notifyNewPrescriptionPatient({
+        patientProfileId: prescription.patientProfileId,
+        patientName: prescription.patientProfile.name,
+        prescriptionCode: prescription.prescriptionCode,
+        services: prescription.services,
+        doctorId: prescription.doctorId,
+        technicianId: prescription.services[0]?.technicianId,
+        serviceIds,
+        clinicRoomIds,
+        boothIds,
+      });
+    } catch (error) {
+      console.error('Error notifying new patient arrival:', error);
+    }
+  }
+
+  /**
+   * Thông báo hành động của bác sĩ/kỹ thuật viên
+   */
+  private async notifyPatientAction(actionData: {
+    action: 'CALLED' | 'SKIPPED';
+    prescriptionId?: string;
+    serviceId?: string;
+    currentPatient?: any;
+    nextPatient?: any;
+    preparingPatient?: any;
+    doctorId?: string;
+    technicianId?: string;
+  }): Promise<void> {
+    try {
+      let serviceIds: string[] = [];
+      let clinicRoomIds: string[] = [];
+      let boothIds: string[] = [];
+      let patientData: any = null;
+
+      if (actionData.prescriptionId && actionData.serviceId) {
+        // Trường hợp skip service cụ thể
+        const prescription = await this.prisma.prescription.findUnique({
+          where: { id: actionData.prescriptionId },
+          include: {
+            services: { include: { service: true } },
+            patientProfile: true,
+          },
+        });
+
+        if (prescription) {
+          serviceIds = prescription.services.map((s: any) => s.serviceId);
+          const roomsData = await this.getRelatedRoomsAndBooths(serviceIds);
+          clinicRoomIds = roomsData.clinicRoomIds;
+          boothIds = roomsData.boothIds;
+
+          patientData = {
+            patientProfileId: prescription.patientProfileId,
+            patientName: prescription.patientProfile.name,
+            prescriptionCode: prescription.prescriptionCode,
+          };
+        }
+      } else if (actionData.nextPatient) {
+        // Trường hợp gọi bệnh nhân tiếp theo
+        patientData = {
+          patientProfileId: actionData.nextPatient.patientProfileId,
+          patientName: actionData.nextPatient.patientName,
+          prescriptionCode: actionData.nextPatient.prescriptionCode,
+        };
+
+        // Lấy serviceIds từ nextPatient
+        serviceIds =
+          actionData.nextPatient.services?.map((s: any) => s.serviceId) || [];
+        const roomsData = await this.getRelatedRoomsAndBooths(serviceIds);
+        clinicRoomIds = roomsData.clinicRoomIds;
+        boothIds = roomsData.boothIds;
+      }
+
+      if (patientData) {
+        await this.webSocketService.notifyPatientCalled({
+          ...patientData,
+          doctorId: actionData.doctorId,
+          technicianId: actionData.technicianId,
+          serviceIds,
+          clinicRoomIds,
+          boothIds,
+          action: actionData.action,
+          currentPatient: actionData.currentPatient,
+          nextPatient: actionData.nextPatient,
+          preparingPatient: actionData.preparingPatient,
+        });
+      }
+    } catch (error) {
+      console.error('Error notifying patient action:', error);
+    }
+  }
+
+  /**
+   * Lấy thông tin về các phòng và buồng liên quan đến services
+   */
+  private async getRelatedRoomsAndBooths(serviceIds: string[]): Promise<{
+    clinicRoomIds: string[];
+    boothIds: string[];
+  }> {
+    try {
+      const services = await this.prisma.service.findMany({
+        where: { id: { in: serviceIds } },
+        include: {
+          clinicRoomServices: {
+            include: {
+              clinicRoom: {
+                include: {
+                  booth: {
+                    select: { id: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const clinicRoomIds: string[] = [];
+      const boothIds: string[] = [];
+
+      services.forEach((service) => {
+        service.clinicRoomServices.forEach((crs) => {
+          clinicRoomIds.push(crs.clinicRoom.id);
+          crs.clinicRoom.booth.forEach((booth) => {
+            boothIds.push(booth.id);
+          });
+        });
+      });
+
+      return {
+        clinicRoomIds: [...new Set(clinicRoomIds)], // Remove duplicates
+        boothIds: [...new Set(boothIds)], // Remove duplicates
+      };
+    } catch (error) {
+      console.error('Error getting related rooms and booths:', error);
+      return { clinicRoomIds: [], boothIds: [] };
+    }
+  }
+
+  async createPrescriptionFromAppointment(
+    appointmentCode: string,
+    user: JwtUserPayload,
+  ) {
+    const appt = await this.prisma.appointment.findFirst({
+      where: { appointmentCode },
+      include: {
+        patientProfile: true,
+        doctor: { include: { auth: true } },
+        appointmentServices: true,
+      },
+    });
+    if (!appt) throw new NotFoundException('Appointment not found');
+    if (!appt.patientProfile)
+      throw new NotFoundException('Patient profile not found');
+
+    const doctorId = appt.doctorId ?? user.doctor?.id ?? null;
+    const servicesToCreate = (appt.appointmentServices || []).map(
+      (as, idx) => ({
+        serviceId: as.serviceId,
+        status: PrescriptionStatus.NOT_STARTED,
+        order: idx + 1,
+        note: null,
+        doctorId: doctorId,
+        technicianId: null,
+      }),
+    );
+    if (servicesToCreate.length === 0) {
+      throw new BadRequestException('Appointment has no services');
+    }
+
+    const doctorName =
+      appt.doctor?.auth?.name ||
+      (user.role === 'RECEPTIONIST' ? 'Receptionist' : 'Unknown');
+    const code = this.codeGenerator.generatePrescriptionCode(
+      doctorName,
+      appt.patientProfile.name,
+    );
+
+    const prescription = await this.prisma.prescription.create({
+      data: {
+        prescriptionCode: code,
+        patientProfileId: appt.patientProfileId,
+        doctorId: doctorId,
+        note: null,
+        medicalRecordId: null,
+        services: { create: servicesToCreate },
+      },
+      include: {
+        services: { include: { service: true }, orderBy: { order: 'asc' } },
+        patientProfile: true,
+        doctor: true,
+      },
+    });
+
+    return prescription;
+  }
+
+  async getAppointmentByCode(appointmentCode: string) {
+    const appt = await this.prisma.appointment.findFirst({
+      where: { appointmentCode },
+      include: {
+        patientProfile: true,
+        specialty: true,
+        doctor: { include: { auth: true } },
+        service: true,
+        workSession: true,
+        appointmentServices: {
+          include: { service: true },
+        },
+      },
+    });
+    if (!appt) {
+      throw new NotFoundException('Appointment not found');
+    }
+    return appt;
+  }
+
+  /**
+   * Lấy danh sách tất cả dịch vụ với phân trang
+   * @param page - Số trang (bắt đầu từ 1)
+   * @param limit - Số lượng items mỗi trang
+   * @param search - Từ khóa tìm kiếm (tùy chọn)
+   * @param isActive - Lọc theo trạng thái active (tùy chọn)
+   * @returns Danh sách dịch vụ với thông tin phân trang
+   */
+  async getAllServices(
+    page: string = '1',
+    limit: string = '10',
+    search?: string,
+    isActive?: boolean,
+  ) {
+    const pageNum = Math.max(parseInt(page || '1', 10) || 1, 1);
+    const limitNum = Math.min(
+      Math.max(parseInt(limit || '10', 10) || 10, 1),
+      100,
+    );
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build where condition
+    const where: any = {};
+
+    if (isActive !== undefined) {
+      where.isActive = isActive;
+    }
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { serviceCode: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [total, data] = await this.prisma.$transaction([
+      this.prisma.service.count({ where }),
+      this.prisma.service.findMany({
+        where,
+        select: {
+          id: true,
+          serviceCode: true,
+          name: true,
+          price: true,
+          description: true,
+          durationMinutes: true,
+          isActive: true,
+          requiresDoctor: true,
+          unit: true,
+          currency: true,
+          category: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+          specialty: {
+            select: {
+              id: true,
+              specialtyCode: true,
+              name: true,
+            },
+          },
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: [{ name: 'asc' }, { serviceCode: 'asc' }],
+        skip,
+        take: limitNum,
+      }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+      },
+    };
+  }
+
+  /**
+   * Lấy danh sách doctors đang có work session với service cụ thể
+   * @param serviceId - ID của service
+   * @param serviceCode - Code của service (alternative to serviceId)
+   * @returns Danh sách doctors với work session đang active
+   */
+  async getDoctorsByService(
+    serviceId?: string,
+    serviceCode?: string,
+  ): Promise<
+    Array<{
+      doctorId: string;
+      doctorCode: string;
+      doctorName: string;
+      boothId: string | null;
+      boothCode: string | null;
+      boothName: string | null;
+      clinicRoomId: string | null;
+      clinicRoomCode: string | null;
+      clinicRoomName: string | null;
+      workSessionId: string | null;
+      workSessionStartTime: Date | null;
+      workSessionEndTime: Date | null;
+    }>
+  > {
+    if (!serviceId && !serviceCode) {
+      throw new BadRequestException(
+        'Either serviceId or serviceCode is required',
+      );
+    }
+
+    // Find service
+    const service = serviceId
+      ? await this.prisma.service.findUnique({
+          where: { id: serviceId },
+          select: { id: true, serviceCode: true },
+        })
+      : await this.prisma.service.findUnique({
+          where: { serviceCode: serviceCode! },
+          select: { id: true, serviceCode: true },
+        });
+
+    if (!service) {
+      throw new NotFoundException('Service not found');
+    }
+
+    const currentTime = new Date();
+
+    // Lấy local time components (GMT+7 - Asia/Ho_Chi_Minh)
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+
+    const parts = formatter.formatToParts(currentTime);
+    const year = parseInt(parts.find((p) => p.type === 'year')?.value || '0');
+    const month = parseInt(parts.find((p) => p.type === 'month')?.value || '0');
+    const day = parseInt(parts.find((p) => p.type === 'day')?.value || '0');
+    const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0');
+    const minute = parseInt(
+      parts.find((p) => p.type === 'minute')?.value || '0',
+    );
+    const second = parseInt(
+      parts.find((p) => p.type === 'second')?.value || '0',
+    );
+
+    // Tạo Date object từ local time components
+    // Nếu database lưu thời gian theo local time (GMT+7), cần tạo Date object
+    // đại diện cho cùng thời điểm nhưng được interpret như UTC
+    // Ví dụ: Local time 21:52:22 GMT+7 = UTC 14:52:22
+    // Nhưng nếu DB lưu "21:52:22" như UTC string, thì cần tạo Date từ đó
+    // Giả sử DB lưu local time như UTC (không có timezone info), tạo Date từ components
+    const localTime = new Date(
+      Date.UTC(year, month - 1, day, hour, minute, second),
+    );
+
+    const localTimeString = currentTime.toLocaleString('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+
+    console.log('currentTime (UTC):', currentTime.toISOString());
+    console.log('currentTime (Local - GMT+7):', localTimeString);
+    console.log('localTime (Date for DB comparison):', localTime.toISOString());
+    console.log('service', service);
+    // Approach 1: Find through WorkSessionService (work sessions that have this service)
+    const workSessionServices = await this.prisma.workSessionService.findMany({
+      where: { serviceId: service.id },
+      include: {
+        workSession: {
+          include: {
+            doctor: {
+              include: {
+                auth: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+            booth: {
+              include: {
+                room: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const doctorMap = new Map<
+      string,
+      {
+        doctorId: string;
+        doctorCode: string;
+        doctorName: string;
+        boothId: string | null;
+        boothCode: string | null;
+        boothName: string | null;
+        clinicRoomId: string | null;
+        clinicRoomCode: string | null;
+        clinicRoomName: string | null;
+        workSessionId: string | null;
+        workSessionStartTime: Date | null;
+        workSessionEndTime: Date | null;
+      }
+    >();
+
+    // Collect from work session services (filter active sessions)
+    for (const wss of workSessionServices) {
+      const workSession = wss.workSession;
+      if (
+        workSession &&
+        workSession.doctorId &&
+        workSession.doctor &&
+        workSession.startTime <= localTime &&
+        workSession.endTime >= localTime &&
+        (workSession.status === 'APPROVED' ||
+          workSession.status === 'IN_PROGRESS')
+      ) {
+        const doctorId = workSession.doctorId;
+        if (!doctorMap.has(doctorId)) {
+          const booth = workSession.booth;
+          doctorMap.set(doctorId, {
+            doctorId: doctorId,
+            doctorCode: workSession.doctor.doctorCode,
+            doctorName: workSession.doctor.auth.name,
+            boothId: booth?.id || null,
+            boothCode: booth?.boothCode || null,
+            boothName: booth?.name || null,
+            clinicRoomId: booth?.room?.id || null,
+            clinicRoomCode: booth?.room?.roomCode || null,
+            clinicRoomName: booth?.room?.roomName || null,
+            workSessionId: workSession.id,
+            workSessionStartTime: workSession.startTime,
+            workSessionEndTime: workSession.endTime,
+          });
+        }
+      }
+    }
+
+    // Approach 2: Fallback - Find through ClinicRoomService (if no results from approach 1)
+    if (doctorMap.size === 0) {
+      const clinicRoomServices = await this.prisma.clinicRoomService.findMany({
+        where: { serviceId: service.id },
+        include: {
+          clinicRoom: {
+            include: {
+              booth: {
+                where: { isActive: true },
+                include: {
+                  workSessions: {
+                    where: {
+                      doctorId: { not: null },
+                      startTime: { lte: localTime },
+                      endTime: { gte: localTime },
+                      status: {
+                        in: ['APPROVED', 'IN_PROGRESS'],
+                      },
+                    },
+                    include: {
+                      doctor: {
+                        include: {
+                          auth: {
+                            select: {
+                              name: true,
+                            },
+                          },
+                        },
+                      },
+                    },
+                    orderBy: { startTime: 'asc' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      for (const crs of clinicRoomServices) {
+        for (const booth of crs.clinicRoom.booth) {
+          for (const workSession of booth.workSessions) {
+            if (workSession.doctorId && workSession.doctor) {
+              const doctorId = workSession.doctorId;
+              if (!doctorMap.has(doctorId)) {
+                doctorMap.set(doctorId, {
+                  doctorId: doctorId,
+                  doctorCode: workSession.doctor.doctorCode,
+                  doctorName: workSession.doctor.auth.name,
+                  boothId: booth.id,
+                  boothCode: booth.boothCode,
+                  boothName: booth.name,
+                  clinicRoomId: crs.clinicRoomId,
+                  clinicRoomCode: crs.clinicRoom.roomCode,
+                  clinicRoomName: crs.clinicRoom.roomName,
+                  workSessionId: workSession.id,
+                  workSessionStartTime: workSession.startTime,
+                  workSessionEndTime: workSession.endTime,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+    return Array.from(doctorMap.values());
+  }
+
+  async getAvailableDoctorsForService(
+    prescriptionId: string,
+    serviceId: string,
+  ) {
+    // Verify prescription exists
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: {
+        services: {
+          where: { serviceId },
+          include: {
+            service: true,
+          },
+        },
+      },
+    });
+
+    if (!prescription) {
+      throw new NotFoundException('Prescription not found');
+    }
+
+    if (prescription.services.length === 0) {
+      throw new BadRequestException('Service not found in prescription');
+    }
+
+    const prescriptionService = prescription.services[0];
+    
+    // If service is completed, return empty list
+    if (prescriptionService.status === PrescriptionStatus.COMPLETED) {
+      return [];
+    }
+
+    // Get current time
+    const now = new Date();
+
+    // Find all active WorkSessions with doctors that have this service
+    const doctorWorkSessions = await this.prisma.workSession.findMany({
+      where: {
+        status: { in: [WorkSessionStatus.APPROVED, WorkSessionStatus.IN_PROGRESS] },
+        startTime: { lte: now },
+        endTime: { gte: now },
+        doctorId: { not: null },
+        services: {
+          some: {
+            serviceId: serviceId,
+          },
+        },
+      },
+      include: {
+        doctor: {
+          include: {
+            auth: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        booth: {
+          include: {
+            room: {
+              select: {
+                id: true,
+                roomCode: true,
+                roomName: true,
+              },
+            },
+          },
+        },
+        services: {
+          where: {
+            serviceId: serviceId,
+          },
+          include: {
+            service: {
+              select: {
+                id: true,
+                serviceCode: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Find all active WorkSessions with technicians that have this service
+    const technicianWorkSessions = await this.prisma.workSession.findMany({
+      where: {
+        status: { in: [WorkSessionStatus.APPROVED, WorkSessionStatus.IN_PROGRESS] },
+        startTime: { lte: now },
+        endTime: { gte: now },
+        technicianId: { not: null },
+        services: {
+          some: {
+            serviceId: serviceId,
+          },
+        },
+      },
+      include: {
+        technician: {
+          include: {
+            auth: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        booth: {
+          include: {
+            room: {
+              select: {
+                id: true,
+                roomCode: true,
+                roomName: true,
+              },
+            },
+          },
+        },
+        services: {
+          where: {
+            serviceId: serviceId,
+          },
+          include: {
+            service: {
+              select: {
+                id: true,
+                serviceCode: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Transform doctors to response format
+    const doctors = doctorWorkSessions
+      .filter(ws => ws.doctor && ws.doctor.auth)
+      .map(ws => ({
+        type: 'doctor' as const,
+        doctorId: ws.doctor!.id,
+        doctorCode: ws.doctor!.doctorCode,
+        name: ws.doctor!.auth!.name,
+        boothId: ws.boothId,
+        boothCode: ws.booth?.boothCode || null,
+        boothName: ws.booth?.name || null,
+        clinicRoomId: ws.booth?.room?.id || null,
+        clinicRoomCode: ws.booth?.room?.roomCode || null,
+        clinicRoomName: ws.booth?.room?.roomName || null,
+        workSessionId: ws.id,
+        workSessionStartTime: ws.startTime,
+        workSessionEndTime: ws.endTime,
+      }));
+
+    // Transform technicians to response format
+    const technicians = technicianWorkSessions
+      .filter(ws => ws.technician && ws.technician.auth)
+      .map(ws => ({
+        type: 'technician' as const,
+        technicianId: ws.technician!.id,
+        technicianCode: ws.technician!.technicianCode,
+        name: ws.technician!.auth!.name,
+        boothId: ws.boothId,
+        boothCode: ws.booth?.boothCode || null,
+        boothName: ws.booth?.name || null,
+        clinicRoomId: ws.booth?.room?.id || null,
+        clinicRoomCode: ws.booth?.room?.roomCode || null,
+        clinicRoomName: ws.booth?.room?.roomName || null,
+        workSessionId: ws.id,
+        workSessionStartTime: ws.startTime,
+        workSessionEndTime: ws.endTime,
+      }));
+
+    // Remove duplicates based on id
+    const uniqueDoctors = Array.from(
+      new Map(doctors.map(d => [d.doctorId, d])).values()
+    );
+
+    const uniqueTechnicians = Array.from(
+      new Map(technicians.map(t => [t.technicianId, t])).values()
+    );
+
+    return [...uniqueDoctors, ...uniqueTechnicians];
+  }
+
+  async getById(prescriptionId: string) {
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: {
+        services: {
+          include: {
+            service: {
+              select: {
+                id: true,
+                serviceCode: true,
+                name: true,
+                description: true,
+              },
+            },
+            doctor: {
+              include: {
+                auth: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+            technician: {
+              include: {
+                auth: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+            workSession: {
+              include: {
+                booth: {
+                  include: {
+                    room: {
+                      select: {
+                        id: true,
+                        roomCode: true,
+                        roomName: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            booth: {
+              include: {
+                room: {
+                  select: {
+                    id: true,
+                    roomCode: true,
+                    roomName: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            order: 'asc',
+          },
+        },
+        patientProfile: {
+          select: {
+            id: true,
+            profileCode: true,
+            name: true,
+            dateOfBirth: true,
+            gender: true,
+          },
+        },
+        doctor: {
+          include: {
+            auth: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        medicalRecord: {
+          select: {
+            id: true,
+            medicalRecordCode: true,
+          },
+        },
+      },
+    });
+
+    if (!prescription) {
+      throw new NotFoundException('Prescription not found');
+    }
+
+    return prescription;
+  }
+
+  async updatePrescriptionServices(
+    prescriptionId: string,
+    dto: UpdatePrescriptionServicesDto,
+    user: JwtUserPayload,
+  ) {
+    // Verify prescription exists
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: {
+        services: {
+          include: {
+            service: true,
+            doctor: {
+              include: {
+                auth: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!prescription) {
+      throw new NotFoundException('Prescription not found');
+    }
+
+    // Update prescription status if provided
+    if (dto.prescriptionStatus) {
+      await this.prisma.prescription.update({
+        where: { id: prescriptionId },
+        data: {
+          status: dto.prescriptionStatus,
+        },
+      });
+    }
+
+    // Update prescription services if provided
+    if (dto.services && dto.services.length > 0) {
+      for (const serviceUpdate of dto.services) {
+        const prescriptionService = prescription.services.find(
+          ps => ps.id === serviceUpdate.prescriptionServiceId,
+        );
+
+        if (!prescriptionService) {
+          throw new NotFoundException(
+            `PrescriptionService ${serviceUpdate.prescriptionServiceId} not found`,
+          );
+        }
+
+        // Check if service is completed - cannot update doctor if completed
+        if (
+          prescriptionService.status === PrescriptionStatus.COMPLETED &&
+          serviceUpdate.doctorId &&
+          serviceUpdate.doctorId !== prescriptionService.doctorId
+        ) {
+          throw new BadRequestException(
+            'Cannot change doctor for completed service',
+          );
+        }
+
+        const updateData: any = {};
+
+        if (serviceUpdate.status) {
+          updateData.status = serviceUpdate.status;
+          
+          // Update timestamps based on status
+          if (serviceUpdate.status === PrescriptionStatus.SERVING && !prescriptionService.startedAt) {
+            updateData.startedAt = new Date();
+          }
+          if (serviceUpdate.status === PrescriptionStatus.COMPLETED && !prescriptionService.completedAt) {
+            updateData.completedAt = new Date();
+          }
+        }
+
+        // Handle doctor assignment
+        if (serviceUpdate.doctorId) {
+          // If switching from technician to doctor, clear technician info
+          updateData.technicianId = null;
+
+          // Verify doctor exists and has active work session for this service
+          const now = new Date();
+          const workSessions = await this.prisma.workSession.findMany({
+            where: {
+              doctorId: serviceUpdate.doctorId,
+              status: { in: [WorkSessionStatus.APPROVED, WorkSessionStatus.IN_PROGRESS] },
+              startTime: { lte: now },
+              endTime: { gte: now },
+              services: {
+                some: {
+                  serviceId: prescriptionService.serviceId,
+                },
+              },
+            },
+            include: {
+              booth: {
+                include: {
+                  room: {
+                    select: {
+                      id: true,
+                    },
+                  },
+                },
+              },
+            },
+            take: 1,
+          });
+
+          if (workSessions.length === 0) {
+            // Verify doctor exists
+            const doctor = await this.prisma.doctor.findUnique({
+              where: { id: serviceUpdate.doctorId },
+            });
+
+            if (!doctor) {
+              throw new NotFoundException('Doctor not found');
+            }
+
+            throw new BadRequestException(
+              'Doctor does not have active work session for this service',
+            );
+          }
+
+          const workSession = workSessions[0];
+          updateData.doctorId = serviceUpdate.doctorId;
+          updateData.workSessionId = workSession.id;
+          updateData.boothId = workSession.boothId;
+          updateData.clinicRoomId = workSession.booth?.roomId || null;
+        }
+
+        // Handle technician assignment
+        if (serviceUpdate.technicianId) {
+          // If switching from doctor to technician, clear doctor info
+          updateData.doctorId = null;
+
+          // Verify technician exists and has active work session for this service
+          const now = new Date();
+          const workSessions = await this.prisma.workSession.findMany({
+            where: {
+              technicianId: serviceUpdate.technicianId,
+              status: { in: [WorkSessionStatus.APPROVED, WorkSessionStatus.IN_PROGRESS] },
+              startTime: { lte: now },
+              endTime: { gte: now },
+              services: {
+                some: {
+                  serviceId: prescriptionService.serviceId,
+                },
+              },
+            },
+            include: {
+              booth: {
+                include: {
+                  room: {
+                    select: {
+                      id: true,
+                    },
+                  },
+                },
+              },
+            },
+            take: 1,
+          });
+
+          if (workSessions.length === 0) {
+            // Verify technician exists
+            const technician = await this.prisma.technician.findUnique({
+              where: { id: serviceUpdate.technicianId },
+            });
+
+            if (!technician) {
+              throw new NotFoundException('Technician not found');
+            }
+
+            throw new BadRequestException(
+              'Technician does not have active work session for this service',
+            );
+          }
+
+          const workSession = workSessions[0];
+          updateData.technicianId = serviceUpdate.technicianId;
+          updateData.workSessionId = workSession.id;
+          updateData.boothId = workSession.boothId;
+          updateData.clinicRoomId = workSession.booth?.roomId || null;
+        }
+
+        await this.prisma.prescriptionService.update({
+          where: { id: serviceUpdate.prescriptionServiceId },
+          data: updateData,
+        });
+      }
+    }
+
+    // Return updated prescription
+    const updatedPrescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: {
+        services: {
+          include: {
+            service: {
+              select: {
+                id: true,
+                serviceCode: true,
+                name: true,
+              },
+            },
+            doctor: {
+              include: {
+                auth: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        patientProfile: {
+          select: {
+            id: true,
+            profileCode: true,
+            name: true,
+          },
+        },
+        doctor: {
+          include: {
+            auth: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return updatedPrescription;
+  }
+
+  /**
+   * Lấy danh sách bác sĩ/kỹ thuật viên khả dụng cho một dịch vụ (bao gồm cả người đang thực hiện)
+   * Chỉ trả về những người đang làm việc (WorkSession status = IN_PROGRESS)
+   * và có dịch vụ đó trong WorkSessionService
+   * Luôn bao gồm người đang thực hiện dịch vụ (nếu có) trong danh sách
+   */
+  async getAvailableAssigneesForService(
+    prescriptionId: string,
+    serviceId: string,
+  ) {
+    // Kiểm tra prescription tồn tại và lấy thông tin PrescriptionService
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: {
+        services: {
+          where: { serviceId: serviceId },
+          include: {
+            doctor: {
+              include: {
+                auth: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+            technician: {
+              include: {
+                auth: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+            workSession: {
+              include: {
+                booth: {
+                  include: {
+                    room: {
+                      select: {
+                        id: true,
+                        roomCode: true,
+                        roomName: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            booth: {
+              include: {
+                room: {
+                  select: {
+                    id: true,
+                    roomCode: true,
+                    roomName: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!prescription) {
+      throw new NotFoundException('Prescription not found');
+    }
+
+    // Kiểm tra service tồn tại
+    const service = await this.prisma.service.findUnique({
+      where: { id: serviceId },
+      select: { id: true },
+    });
+
+    if (!service) {
+      throw new NotFoundException('Service not found');
+    }
+
+    const now = new Date();
+
+    // Tìm các WorkSession đang IN_PROGRESS và có dịch vụ này
+    const workSessions = await this.prisma.workSession.findMany({
+      where: {
+        status: WorkSessionStatus.IN_PROGRESS,
+        startTime: { lte: now },
+        endTime: { gte: now },
+        services: {
+          some: {
+            serviceId: serviceId,
+          },
+        },
+      },
+      include: {
+        doctor: {
+          include: {
+            auth: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        technician: {
+          include: {
+            auth: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        booth: {
+          include: {
+            room: {
+              select: {
+                id: true,
+                roomCode: true,
+                roomName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Tạo danh sách bác sĩ và kỹ thuật viên khả dụng
+    const availableOptions: Array<{
+      type: 'doctor' | 'technician';
+      doctorId?: string;
+      doctorCode?: string;
+      doctorName?: string;
+      technicianId?: string;
+      technicianCode?: string;
+      name: string;
+      boothId: string | null;
+      boothCode: string | null;
+      boothName: string | null;
+      clinicRoomId: string | null;
+      clinicRoomCode: string | null;
+      clinicRoomName: string | null;
+      workSessionId: string | null;
+      workSessionStartTime: Date | null;
+      workSessionEndTime: Date | null;
+    }> = [];
+
+    // Set để tránh trùng lặp (key = doctorId hoặc technicianId)
+    const addedPersonIds = new Set<string>();
+
+    // Thêm người đang thực hiện dịch vụ (nếu có) vào đầu danh sách
+    const currentPrescriptionService = prescription.services.find(ps => ps.serviceId === serviceId);
+    if (currentPrescriptionService) {
+      if (currentPrescriptionService.doctorId && currentPrescriptionService.doctor) {
+        const ws = currentPrescriptionService.workSession;
+        availableOptions.push({
+          type: 'doctor',
+          doctorId: currentPrescriptionService.doctor.id,
+          doctorCode: currentPrescriptionService.doctor.doctorCode,
+          doctorName: currentPrescriptionService.doctor.auth?.name || '',
+          name: currentPrescriptionService.doctor.auth?.name || '',
+          boothId: ws?.boothId || currentPrescriptionService.boothId || null,
+          boothCode: ws?.booth?.name || null,
+          boothName: ws?.booth?.name || null,
+          clinicRoomId: ws?.booth?.room?.id || currentPrescriptionService.clinicRoomId || null,
+          clinicRoomCode: ws?.booth?.room?.roomCode || null,
+          clinicRoomName: ws?.booth?.room?.roomName || null,
+          workSessionId: ws?.id || null,
+          workSessionStartTime: ws?.startTime || null,
+          workSessionEndTime: ws?.endTime || null,
+        });
+        addedPersonIds.add(`doctor-${currentPrescriptionService.doctor.id}`);
+      }
+
+      if (currentPrescriptionService.technicianId && currentPrescriptionService.technician) {
+        const ws = currentPrescriptionService.workSession;
+        availableOptions.push({
+          type: 'technician',
+          technicianId: currentPrescriptionService.technician.id,
+          technicianCode: (currentPrescriptionService.technician as any).technicianCode || currentPrescriptionService.technician.id,
+          name: currentPrescriptionService.technician.auth?.name || '',
+          boothId: ws?.boothId || currentPrescriptionService.boothId || null,
+          boothCode: ws?.booth?.name || null,
+          boothName: ws?.booth?.name || null,
+          clinicRoomId: ws?.booth?.room?.id || currentPrescriptionService.clinicRoomId || null,
+          clinicRoomCode: ws?.booth?.room?.roomCode || null,
+          clinicRoomName: ws?.booth?.room?.roomName || null,
+          workSessionId: ws?.id || null,
+          workSessionStartTime: ws?.startTime || null,
+          workSessionEndTime: ws?.endTime || null,
+        });
+        addedPersonIds.add(`technician-${currentPrescriptionService.technician.id}`);
+      }
+    }
+
+    // Thêm các WorkSession đang IN_PROGRESS (tránh trùng với người đang thực hiện)
+    workSessions.forEach((ws) => {
+      if (ws.doctor && !addedPersonIds.has(`doctor-${ws.doctor.id}`)) {
+        availableOptions.push({
+          type: 'doctor',
+          doctorId: ws.doctor.id,
+          doctorCode: ws.doctor.doctorCode,
+          doctorName: ws.doctor.auth?.name || '',
+          name: ws.doctor.auth?.name || '',
+          boothId: ws.boothId,
+          boothCode: ws.booth?.name || null,
+          boothName: ws.booth?.name || null,
+          clinicRoomId: ws.booth?.room?.id || null,
+          clinicRoomCode: ws.booth?.room?.roomCode || null,
+          clinicRoomName: ws.booth?.room?.roomName || null,
+          workSessionId: ws.id,
+          workSessionStartTime: ws.startTime,
+          workSessionEndTime: ws.endTime,
+        });
+        addedPersonIds.add(`doctor-${ws.doctor.id}`);
+      }
+
+      if (ws.technician && !addedPersonIds.has(`technician-${ws.technician.id}`)) {
+        availableOptions.push({
+          type: 'technician',
+          technicianId: ws.technician.id,
+          technicianCode: (ws.technician as any).technicianCode || ws.technician.id,
+          name: ws.technician.auth?.name || '',
+          boothId: ws.boothId,
+          boothCode: ws.booth?.name || null,
+          boothName: ws.booth?.name || null,
+          clinicRoomId: ws.booth?.room?.id || null,
+          clinicRoomCode: ws.booth?.room?.roomCode || null,
+          clinicRoomName: ws.booth?.room?.roomName || null,
+          workSessionId: ws.id,
+          workSessionStartTime: ws.startTime,
+          workSessionEndTime: ws.endTime,
+        });
+        addedPersonIds.add(`technician-${ws.technician.id}`);
+      }
+    });
+
+    return availableOptions;
+  }
+
+  /**
+   * Lấy danh sách prescriptions với pagination và filters
+   */
+  async findAll(
+    user: JwtUserPayload,
+    page: string = '1',
+    limit: string = '10',
+    filters?: {
+      patientName?: string;
+      patientPhone?: string;
+      doctorId?: string;
+      status?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+  ) {
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
+    const offset = (pageNum - 1) * limitNum;
+
+    const where: any = {};
+
+    // Filter theo patientProfile (tên và số điện thoại)
+    if (filters?.patientName || filters?.patientPhone) {
+      where.patientProfile = {};
+      if (filters.patientName) {
+        where.patientProfile.name = {
+          contains: filters.patientName,
+          mode: 'insensitive',
+        };
+      }
+      if (filters.patientPhone) {
+        where.patientProfile.phone = {
+          contains: filters.patientPhone,
+        };
+      }
+    }
+
+    // Filter theo bác sĩ thực hiện (doctorId trong PrescriptionService)
+    if (filters?.doctorId) {
+      where.services = {
+        some: {
+          doctorId: filters.doctorId,
+        },
+      };
+    }
+
+    // Filter theo trạng thái
+    if (filters?.status) {
+      where.status = filters.status as PrescriptionStatus;
+    }
+
+    // Filter theo khoảng thời gian (createdAt)
+    if (filters?.dateFrom || filters?.dateTo) {
+      where.createdAt = {};
+      if (filters.dateFrom) {
+        const dateFrom = new Date(filters.dateFrom);
+        dateFrom.setUTCHours(0, 0, 0, 0);
+        where.createdAt.gte = dateFrom;
+      }
+      if (filters.dateTo) {
+        const dateTo = new Date(filters.dateTo);
+        dateTo.setUTCHours(23, 59, 59, 999);
+        where.createdAt.lte = dateTo;
+      }
+    }
+
+    // Role-based filtering
+    if (user.role === 'DOCTOR' && user.doctor?.id) {
+      // Doctors can only see prescriptions assigned to them
+      where.OR = [
+        { doctorId: user.doctor.id },
+        {
+          services: {
+            some: {
+              doctorId: user.doctor.id,
+            },
+          },
+        },
+      ];
+    }
+
+    const [total, data] = await this.prisma.$transaction([
+      this.prisma.prescription.count({ where }),
+      this.prisma.prescription.findMany({
+        where,
+        include: {
+          services: {
+            include: {
+              service: {
+                select: {
+                  id: true,
+                  serviceCode: true,
+                  name: true,
+                },
+              },
+            },
+            orderBy: {
+              order: 'asc',
+            },
+          },
+          patientProfile: {
+            select: {
+              id: true,
+              profileCode: true,
+              name: true,
+            },
+          },
+          doctor: {
+            include: {
+              auth: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          medicalRecord: {
+            select: {
+              id: true,
+              medicalRecordCode: true,
+            },
+          },
+        },
+        orderBy: {
+          id: 'desc',
+        },
+        take: limitNum,
+        skip: offset,
+      }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+      },
+    };
+  }
+}
