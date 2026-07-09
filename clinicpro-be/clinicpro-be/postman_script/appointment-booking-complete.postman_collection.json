@@ -1,0 +1,586 @@
+{
+  "info": {
+    "name": "Appointment Booking Complete API",
+    "description": "Complete Postman collection for testing appointment booking system with authentication",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login as Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{adminIdentifier}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has accessToken\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('accessToken');",
+                  "    pm.collectionVariables.set('accessToken', jsonData.accessToken);",
+                  "    console.log('Admin accessToken:', jsonData.accessToken);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has user data\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('user');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Doctor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{doctorIdentifier}}\",\n  \"password\": \"{{doctorPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has accessToken\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('accessToken');",
+                  "    pm.collectionVariables.set('doctorAccessToken', jsonData.accessToken);",
+                  "    console.log('Doctor accessToken:', jsonData.accessToken);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login as Patient",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"patient@clinic.com\",\n  \"password\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has accessToken\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('accessToken');",
+                  "    pm.collectionVariables.set('patientAccessToken', jsonData.accessToken);",
+                  "    console.log('Patient accessToken:', jsonData.accessToken);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Appointment Booking",
+      "item": [
+        {
+          "name": "Get Specialties",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/specialties",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "specialties"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has specialties array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    pm.expect(jsonData.length).to.be.greaterThan(0);",
+                  "    ",
+                  "    // Save first specialty ID for next requests",
+                  "    if (jsonData.length > 0) {",
+                  "        pm.collectionVariables.set('specialtyId', jsonData[0].id);",
+                  "        console.log('Specialty ID:', jsonData[0].id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Doctors by Specialty",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/specialties/{{specialtyId}}/doctors",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "specialties", "{{specialtyId}}", "doctors"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has doctors data\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('doctors');",
+                  "    pm.expect(jsonData.doctors).to.be.an('array');",
+                  "    console.log('Doctors response:', jsonData);",
+                  "    ",
+                  "    // Save first doctor ID for next requests",
+                  "    if (jsonData.doctors.length > 0) {",
+                  "        pm.collectionVariables.set('doctorId', jsonData.doctors[0].doctorId);",
+                  "        console.log('Doctor ID set to:', jsonData.doctors[0].doctorId);",
+                  "    } else {",
+                  "        console.log('No doctors found in response');",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Available Doctors by Specialty and Date",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/doctors/available?specialtyId={{specialtyId}}&date={{appointmentDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "doctors", "available"],
+              "query": [
+                {
+                  "key": "specialtyId",
+                  "value": "{{specialtyId}}"
+                },
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has doctors array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    ",
+                  "    // Save first doctor ID for next requests",
+                  "    if (jsonData.length > 0) {",
+                  "        pm.collectionVariables.set('availableDoctorId', jsonData[0].doctorId);",
+                  "        console.log('Available Doctor ID:', jsonData[0].doctorId);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Doctor Services for Date",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/doctors/{{doctorId}}/services?date={{appointmentDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "doctors", "{{doctorId}}", "services"],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has services array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('services');",
+                  "    pm.expect(jsonData.services).to.be.an('array');",
+                  "    ",
+                  "    // Save first service ID for next requests",
+                  "    if (jsonData.services.length > 0) {",
+                  "        pm.collectionVariables.set('serviceId', jsonData.services[0].serviceId);",
+                  "        console.log('Service ID:', jsonData.services[0].serviceId);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Available Slots for Service and Date",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/doctors/{{doctorId}}/available-slots?serviceId={{serviceId}}&date={{appointmentDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "doctors", "{{doctorId}}", "available-slots"],
+              "query": [
+                {
+                  "key": "serviceId",
+                  "value": "{{serviceId}}"
+                },
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has slots array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('slots');",
+                  "    pm.expect(jsonData.slots).to.be.an('array');",
+                  "    ",
+                  "    // Find first available slot",
+                  "    var availableSlots = jsonData.slots.filter(function(slot) {",
+                  "        return slot.isAvailable === true;",
+                  "    });",
+                  "    ",
+                  "    if (availableSlots.length > 0) {",
+                  "        pm.collectionVariables.set('startTime', availableSlots[0].startTime);",
+                  "        pm.collectionVariables.set('endTime', availableSlots[0].endTime);",
+                  "        console.log('Available slot:', availableSlots[0].startTime, '-', availableSlots[0].endTime);",
+                  "    } else {",
+                  "        console.log('No available slots found');",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book Appointment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{patientAccessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientProfileId\": \"{{patientProfileId}}\",\n  \"doctorId\": \"{{doctorId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"date\": \"{{appointmentDate}}\",\n  \"startTime\": \"{{startTime}}\",\n  \"endTime\": \"{{endTime}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/appointments",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "appointments"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has appointment data\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('appointmentId');",
+                  "    pm.expect(jsonData).to.have.property('appointmentCode');",
+                  "    ",
+                  "    // Save appointment details for later use",
+                  "    pm.collectionVariables.set('bookedAppointmentId', jsonData.appointmentId);",
+                  "    pm.collectionVariables.set('bookedAppointmentCode', jsonData.appointmentCode);",
+                  "    console.log('Booked appointment:', jsonData.appointmentCode);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Doctor Working Days",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/doctors/{{doctorId}}/working-days?month={{appointmentMonth}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "doctors", "{{doctorId}}", "working-days"],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "{{appointmentMonth}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has workingDays array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('workingDays');",
+                  "    pm.expect(jsonData.workingDays).to.be.an('array');",
+                  "    console.log('Working days:', jsonData.workingDays);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Patient Appointments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{patientAccessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/patient/appointments",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "patient", "appointments"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has appointments array\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    console.log('Patient appointments count:', jsonData.length);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Slots After Booking",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointment-booking/doctors/{{doctorId}}/available-slots?serviceId={{serviceId}}&date={{appointmentDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointment-booking", "doctors", "{{doctorId}}", "available-slots"],
+              "query": [
+                {
+                  "key": "serviceId",
+                  "value": "{{serviceId}}"
+                },
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Previously booked slot should be unavailable\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('slots');",
+                  "    ",
+                  "    var startTime = pm.collectionVariables.get('startTime');",
+                  "    var bookedSlot = jsonData.slots.find(function(slot) {",
+                  "        return slot.startTime === startTime;",
+                  "    });",
+                  "    ",
+                  "    if (bookedSlot) {",
+                  "        pm.expect(bookedSlot.isAvailable).to.be.false;",
+                  "        console.log('Booked slot is now unavailable:', startTime);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "doctorAccessToken",
+      "value": ""
+    },
+    {
+      "key": "patientAccessToken",
+      "value": ""
+    },
+    {
+      "key": "specialtyId",
+      "value": ""
+    },
+    {
+      "key": "doctorId",
+      "value": ""
+    },
+    {
+      "key": "availableDoctorId",
+      "value": ""
+    },
+    {
+      "key": "serviceId",
+      "value": ""
+    },
+    {
+      "key": "startTime",
+      "value": ""
+    },
+    {
+      "key": "endTime",
+      "value": ""
+    },
+    {
+      "key": "bookedAppointmentId",
+      "value": ""
+    },
+    {
+      "key": "bookedAppointmentCode",
+      "value": ""
+    }
+  ]
+}
