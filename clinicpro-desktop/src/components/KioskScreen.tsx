@@ -1336,7 +1336,7 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ onBack }) => {
                     <div>
                       <p className="font-semibold text-yellow-900 mb-1">Lưu ý</p>
                       <p className="text-sm text-yellow-800">
-                        Bạn đến quá sớm so với lịch nên sẽ không được ưu tiên nhé, bạn có muốn xác nhận không?
+                        Bạn đến sớm hơn 15 phút so với giờ hẹn. Bạn vẫn có thể lấy số nhưng sẽ không được ưu tiên xếp theo lịch hẹn. Xác nhận tiếp tục?
                       </p>
                     </div>
                   </div>

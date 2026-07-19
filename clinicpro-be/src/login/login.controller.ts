@@ -291,4 +291,38 @@ export class LoginController {
       return { error: 'Invalid user data' };
     }
   }
+
+  @Post('forgot-password')
+  @ApiOperation({ summary: 'Quên mật khẩu - Gửi OTP đến email/phone' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { identifier: { type: 'string', description: 'Email hoặc số điện thoại' } },
+      required: ['identifier'],
+    },
+  })
+  async forgotPassword(@Body('identifier') identifier: string) {
+    return this.authService.forgotPassword(identifier);
+  }
+
+  @Post('reset-password')
+  @ApiOperation({ summary: 'Đặt lại mật khẩu với OTP' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        identifier: { type: 'string', description: 'Email hoặc số điện thoại' },
+        otp: { type: 'string', description: 'Mã OTP 6 chữ số' },
+        newPassword: { type: 'string', description: 'Mật khẩu mới' },
+      },
+      required: ['identifier', 'otp', 'newPassword'],
+    },
+  })
+  async resetPassword(
+    @Body('identifier') identifier: string,
+    @Body('otp') otp: string,
+    @Body('newPassword') newPassword: string,
+  ) {
+    return this.authService.resetPassword(identifier, otp, newPassword);
+  }
 }

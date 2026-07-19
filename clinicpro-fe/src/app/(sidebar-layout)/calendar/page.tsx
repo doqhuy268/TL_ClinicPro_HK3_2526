@@ -272,7 +272,7 @@ export default function CalendarPage() {
               onSpecialtyFilterChange={setFilteredCalendarEvents}
               view={viewMode}
               onViewChange={setViewMode}
-              height="calc(120vh - 400px)"
+              height="calc(100vh - 280px)"
               isAdmin={isAdmin}
               selectedDoctorId={isAdmin ? selectedDoctorId : null}
               isReady={!authLoading}

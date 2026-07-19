@@ -1,8 +1,11 @@
-import { Injectable, UnauthorizedException, Inject } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Inject, BadRequestException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { CodeGeneratorService } from '../user-management/patient-profile/code-generator.service';
+
+// In-memory OTP store for forgot-password (demo/dev only)
+const otpStore = new Map<string, { otp: string; identifier: string; expiresAt: number }>();
 
 interface JwtPayload {
   sub: string;
@@ -419,5 +422,94 @@ export class LoginService {
     });
 
     return { success: true, message: 'Logged out successfully' };
+  }
+
+  /**
+   * Quên mật khẩu - Bước 1: Gửi OTP
+   * Tìm user theo email/phone, tạo OTP, lưu vào memory store, log ra console (dev)
+   */
+  async forgotPassword(identifier: string): Promise<{ message: string; otpDev?: string }> {
+    const auth = await this.prisma.auth.findFirst({
+      where: {
+        OR: [{ phone: identifier }, { email: identifier }],
+      },
+      select: { id: true, phone: true, email: true, name: true },
+    });
+
+    if (!auth) {
+      // Vẫn trả về message chung để không leak thông tin user
+      return {
+        message: 'Nếu thông tin tồn tại trong hệ thống, mã OTP sẽ được gửi đến email/số điện thoại của bạn.',
+      };
+    }
+
+    // Tạo OTP 6 chữ số
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 phút
+
+    // Lưu vào memory store (dev/demo only)
+    otpStore.set(auth.id, { otp, identifier, expiresAt });
+
+    // Log OTP ra console (thay vì gửi email/SMS thật)
+    console.log('═══════════════════════════════════════');
+    console.log(`🔐 [FORGOT PASSWORD] OTP cho ${auth.name || identifier}:`);
+    console.log(`   📧 Email/Phone: ${identifier}`);
+    console.log(`   🔢 OTP: ${otp}`);
+    console.log(`   ⏰ Hết hạn: 5 phút`);
+    console.log('═══════════════════════════════════════');
+
+    return {
+      message: 'Nếu thông tin tồn tại trong hệ thống, mã OTP sẽ được gửi đến email/số điện thoại của bạn.',
+      otpDev: otp, // Chỉ trả về trong môi trường dev để test
+    };
+  }
+
+  /**
+   * Quên mật khẩu - Bước 2: Xác thực OTP & Đặt lại mật khẩu
+   */
+  async resetPassword(
+    identifier: string,
+    otp: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const auth = await this.prisma.auth.findFirst({
+      where: {
+        OR: [{ phone: identifier }, { email: identifier }],
+      },
+      select: { id: true },
+    });
+
+    if (!auth) {
+      throw new NotFoundException('Không tìm thấy tài khoản với thông tin này');
+    }
+
+    // Kiểm tra OTP từ memory store
+    const stored = otpStore.get(auth.id);
+    if (!stored) {
+      throw new BadRequestException('OTP đã hết hạn hoặc không tồn tại. Vui lòng yêu cầu mã mới.');
+    }
+
+    if (Date.now() > stored.expiresAt) {
+      otpStore.delete(auth.id);
+      throw new BadRequestException('OTP đã hết hạn. Vui lòng yêu cầu mã mới.');
+    }
+
+    if (stored.otp !== otp) {
+      throw new BadRequestException('OTP không chính xác.');
+    }
+
+    // Hash mật khẩu mới
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Cập nhật mật khẩu
+    await this.prisma.auth.update({
+      where: { id: auth.id },
+      data: { password: hashedPassword },
+    });
+
+    // Xóa OTP khỏi store
+    otpStore.delete(auth.id);
+
+    return { message: 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập với mật khẩu mới.' };
   }
 }

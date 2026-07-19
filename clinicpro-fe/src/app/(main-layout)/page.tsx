@@ -9,8 +9,6 @@ import {
   Shield, 
   Users, 
   Calendar, 
-  Phone, 
-  MapPin,
   Stethoscope,
   Clock,
   CheckCircle,
@@ -68,7 +66,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
             <Card className="border border-gray-200 hover:shadow-xl transition-all duration-300 group">
               <CardHeader className="pb-4">
                 <div className="w-16 h-16 bg-gradient-to-br from-rose-100 to-pink-100 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
@@ -117,32 +115,6 @@ export default function HomePage() {
                 <CardDescription className="text-base">
                   Đặt lịch khám bệnh trực tuyến với AI gợi ý thời gian phù hợp, tiết kiệm thời gian 
                   và thuận tiện cho bệnh nhân mọi lúc, mọi nơi.
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="border border-gray-200 hover:shadow-xl transition-all duration-300 group">
-              <CardHeader className="pb-4">
-                <div className="w-16 h-16 bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
-                  <Phone className="h-8 w-8 text-amber-500" />
-                </div>
-                <CardTitle className="text-xl">Hỗ trợ 24/7</CardTitle>
-                <CardDescription className="text-base">
-                  Đội ngũ hỗ trợ khách hàng chuyên nghiệp luôn sẵn sàng giải đáp mọi thắc mắc và 
-                  hỗ trợ khi cần thiết qua nhiều kênh liên lạc.
-                </CardDescription>
-              </CardHeader>
-            </Card>
-
-            <Card className="border border-gray-200 hover:shadow-xl transition-all duration-300 group">
-              <CardHeader className="pb-4">
-                <div className="w-16 h-16 bg-gradient-to-br from-sky-50 to-blue-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
-                  <MapPin className="h-8 w-8 text-sky-500" />
-                </div>
-                <CardTitle className="text-xl">Vị trí thuận tiện</CardTitle>
-                <CardDescription className="text-base">
-                  Bệnh viện đặt tại vị trí trung tâm thành phố, dễ dàng di chuyển và tiếp cận các 
-                  dịch vụ y tế với hệ thống giao thông thuận tiện.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -260,40 +232,37 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Stats Section */}
+      {/* System Features Section */}
       <section className="bg-gradient-to-r from-primary to-primary/90 py-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-4xl font-bold text-white mb-3">
-              Thành tựu của chúng tôi
+              Hệ thống quản lý toàn diện
             </h2>
             <p className="text-xl text-white/90 max-w-3xl mx-auto">
-              Những con số ấn tượng phản ánh chất lượng dịch vụ và sự tin tưởng của khách hàng
+              Tích hợp đầy đủ các phân hệ từ tiếp nhận, khám bệnh, thanh toán đến thống kê báo cáo
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 text-center">
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 hover:bg-white/20 transition-all duration-300">
-              <div className="text-4xl font-bold text-white mb-2">10,000+</div>
-              <div className="text-white/90 text-lg">Bệnh nhân đã tin tưởng</div>
+              <div className="text-4xl font-bold text-white mb-2">Kiosk</div>
+              <div className="text-white/90 text-lg">Bốc số tự động</div>
             </div>
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 hover:bg-white/20 transition-all duration-300">
-              <div className="text-4xl font-bold text-white mb-2">200+</div>
-              <div className="text-white/90 text-lg">Bác sĩ chuyên khoa</div>
+              <div className="text-4xl font-bold text-white mb-2">AI</div>
+              <div className="text-white/90 text-lg">Phân luồng chuyên khoa</div>
             </div>
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 hover:bg-white/20 transition-all duration-300">
-              <div className="text-4xl font-bold text-white mb-2">24/7</div>
-              <div className="text-white/90 text-lg">Hỗ trợ khách hàng</div>
+              <div className="text-4xl font-bold text-white mb-2">Real-time</div>
+              <div className="text-white/90 text-lg">Đồng bộ tức thời</div>
             </div>
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 hover:bg-white/20 transition-all duration-300">
-              <div className="text-4xl font-bold text-white mb-2">99%</div>
-              <div className="text-white/90 text-lg">Hài lòng khách hàng</div>
+              <div className="text-4xl font-bold text-white mb-2">QR Pay</div>
+              <div className="text-white/90 text-lg">Thanh toán trực tuyến</div>
             </div>
           </div>
         </div>
       </section>
-
-      {/* Testimonials Section */}
-      
 
       {/* CTA Section */}
       <section className="bg-gradient-to-r from-gray-900 to-gray-800 py-10">

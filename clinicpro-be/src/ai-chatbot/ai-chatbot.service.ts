@@ -158,5 +158,47 @@ export class AiChatbotService {
       conversationId: `tips_${category || 'general'}_${Date.now()}`,
     });
   }
+
+  // ────────────────────────────────────────────────────────────
+  //  CHỨC NĂNG 3: AI TRIAGE — GỢI Ý CHUYÊN KHOA
+  //  Dùng cho Kiosk: bệnh nhân mô tả triệu chứng → AI gợi ý
+  //  chuyên khoa phù hợp để bốc số đúng
+  // ────────────────────────────────────────────────────────────
+  async triageSymptoms(
+    symptoms: string,
+  ): Promise<{ suggestedSpecialty: string; reasoning: string }> {
+    if (!this.model) {
+      throw new BadRequestException('AI service chưa được cấu hình');
+    }
+
+    const prompt = `Bạn là trợ lý phân luồng bệnh nhân tại Phòng khám Đa khoa ClinicPro.
+
+ClinicPro có các chuyên khoa sau: Nội tổng quát, Nhi khoa, Sản Phụ khoa, Tai Mũi Họng, Răng Hàm Mặt, Da liễu, Mắt, Tim mạch, Tiêu hóa, Thần kinh, Cơ xương khớp, Dinh dưỡng, Tâm lý, Y học cổ truyền, Ung bướu, Hô hấp, Tiết niệu, Nội tiết, Vật lý trị liệu.
+
+Dựa vào triệu chứng bệnh nhân mô tả, hãy gợi ý MỘT chuyên khoa phù hợp nhất.
+
+QUAN TRỌNG: Bạn PHẢI trả lời ĐÚNG định dạng JSON sau, không thêm bất kỳ text nào khác:
+{"suggestedSpecialty": "Tên chuyên khoa", "reasoning": "Lý do ngắn gọn bằng tiếng Việt (1-2 câu)"}
+
+Triệu chứng bệnh nhân mô tả: ${symptoms}`;
+
+    try {
+      const result = await this.model.generateContent(prompt);
+      const text = result.response.text().trim();
+      // Parse JSON từ response
+      const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return {
+        suggestedSpecialty: parsed.suggestedSpecialty || 'Nội tổng quát',
+        reasoning: parsed.reasoning || 'Vui lòng đến quầy lễ tân để được tư vấn thêm.',
+      };
+    } catch (error) {
+      this.logger.error('Lỗi AI Triage:', error);
+      return {
+        suggestedSpecialty: 'Nội tổng quát',
+        reasoning: 'Hệ thống AI chưa thể phân tích. Vui lòng đến quầy lễ tân để được tư vấn trực tiếp.',
+      };
+    }
+  }
 }
 

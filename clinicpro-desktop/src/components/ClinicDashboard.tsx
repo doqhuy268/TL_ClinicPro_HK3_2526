@@ -386,7 +386,7 @@ const ClinicDashboard: React.FC<ClinicDashboardProps> = ({ onBack }) => {
                           <p className="font-semibold text-gray-900">{service.patientName}</p>
                         </div>
                         <span className="bg-blue-100 text-blue-800 text-xs font-semibold px-2 py-1 rounded">
-                          SERVING
+                          Đang phục vụ
                         </span>
                       </div>
                       <div className="mt-2 space-y-1 text-sm">
@@ -436,7 +436,7 @@ const ClinicDashboard: React.FC<ClinicDashboardProps> = ({ onBack }) => {
                           <p className="font-semibold text-gray-900">{service.patientName}</p>
                         </div>
                         <span className="bg-yellow-100 text-yellow-800 text-xs font-semibold px-2 py-1 rounded">
-                          PREPARING
+                          Chuẩn bị
                         </span>
                       </div>
                       <div className="mt-2 space-y-1 text-sm">
@@ -486,7 +486,7 @@ const ClinicDashboard: React.FC<ClinicDashboardProps> = ({ onBack }) => {
                           <p className="font-semibold text-gray-900">{service.patientName}</p>
                         </div>
                         <span className="bg-gray-100 text-gray-800 text-xs font-semibold px-2 py-1 rounded">
-                          {service.status === 'WAITING' ? 'WAITING' : 'RETURNING'}
+                          {service.status === 'WAITING' ? 'Chờ' : 'Quay lại'}
                         </span>
                       </div>
                       <div className="mt-2 space-y-1 text-sm">

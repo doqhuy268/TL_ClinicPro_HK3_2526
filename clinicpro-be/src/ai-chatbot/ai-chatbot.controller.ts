@@ -83,4 +83,16 @@ export class AiChatbotController {
       timestamp: new Date(),
     };
   }
+
+  /**
+   * [Kiosk] AI Triage — Gợi ý chuyên khoa dựa trên triệu chứng.
+   * Public endpoint, dùng cho màn hình Kiosk.
+   */
+  @Post('triage')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  async triage(@Body('symptoms') symptoms: string): Promise<{ suggestedSpecialty: string; reasoning: string }> {
+    this.logger.log(`Triage: "${symptoms?.substring(0, 50)}..."`);
+    return this.aiChatbotService.triageSymptoms(symptoms);
+  }
 }

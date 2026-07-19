@@ -99,163 +99,16 @@ export default function SystemSettingsPage() {
           Cài đặt hệ thống
         </h1>
         <p className="text-sm text-gray-600 mt-1">
-          Quản lý cấu hình chuẩn đoán tự động cho các template bệnh án
+          Quản lý cấu hình hệ thống
         </p>
       </div>
 
       <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Brain className="h-5 w-5 text-purple-600" />
-              Cấu hình chuẩn đoán tự động
-            </CardTitle>
+        <CardContent className="py-12">
+          <div className="text-center">
+            <Settings className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+            <p className="text-gray-500">Tính năng đang được phát triển cho phiên bản tiếp theo.</p>
           </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-              <span className="ml-2 text-gray-600">Đang tải...</span>
-            </div>
-          ) : templates.length === 0 ? (
-            <div className="text-center py-12">
-              <FileText className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-              <p className="text-gray-600">Chưa có template nào</p>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-4">
-                {templates.map((template) => (
-                  <div
-                    key={template.id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-1">
-                        <h3 className="font-medium text-gray-900">{template.name}</h3>
-                        {template.isActive ? (
-                          <Badge className="bg-green-100 text-green-800 text-xs">
-                            Đang hoạt động
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-gray-100 text-gray-800 text-xs">
-                            Không hoạt động
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-600 space-y-1">
-                        <p>
-                          <span className="font-medium">Mã template:</span> {template.templateCode}
-                        </p>
-                        {template.specialty && (
-                          <p>
-                            <span className="font-medium">Chuyên khoa:</span>{' '}
-                            {template.specialty.name}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 ml-4">
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          id={`auto-diagnosis-${template.id}`}
-                          checked={template.enableAutoDiagnosis ?? false}
-                          onCheckedChange={() =>
-                            handleToggleAutoDiagnosis(
-                              template.id,
-                              template.enableAutoDiagnosis ?? false
-                            )
-                          }
-                          disabled={updatingIds.has(template.id) || !template.isActive}
-                        />
-                        <Label
-                          htmlFor={`auto-diagnosis-${template.id}`}
-                          className="text-sm font-medium cursor-pointer"
-                        >
-                          Chuẩn đoán tự động
-                        </Label>
-                      </div>
-                      {updatingIds.has(template.id) && (
-                        <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Pagination Controls */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-6 pt-4 border-t">
-                  <div className="text-sm text-gray-600">
-                    Trang {currentPage + 1} / {totalPages}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(0)}
-                      disabled={currentPage === 0 || isLoading}
-                    >
-                      Đầu
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((prev) => Math.max(0, prev - 1))}
-                      disabled={currentPage === 0 || isLoading}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      Trước
-                    </Button>
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                        let pageNum: number;
-                        if (totalPages <= 5) {
-                          pageNum = i;
-                        } else if (currentPage < 3) {
-                          pageNum = i;
-                        } else if (currentPage > totalPages - 4) {
-                          pageNum = totalPages - 5 + i;
-                        } else {
-                          pageNum = currentPage - 2 + i;
-                        }
-                        return (
-                          <Button
-                            key={pageNum}
-                            variant={currentPage === pageNum ? 'default' : 'outline'}
-                            size="sm"
-                            onClick={() => setCurrentPage(pageNum)}
-                            disabled={isLoading}
-                            className="min-w-[40px]"
-                          >
-                            {pageNum + 1}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((prev) => Math.min(totalPages - 1, prev + 1))}
-                      disabled={currentPage >= totalPages - 1 || isLoading}
-                    >
-                      Sau
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(totalPages - 1)}
-                      disabled={currentPage >= totalPages - 1 || isLoading}
-                    >
-                      Cuối
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
         </CardContent>
       </Card>
     </div>

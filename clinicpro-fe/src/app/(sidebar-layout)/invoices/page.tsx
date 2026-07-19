@@ -1758,7 +1758,7 @@ export default function InvoicesPage() {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          {[1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000].map(amount => (
+                          {[50000, 100000, 200000, 500000].map(amount => (
                             <Button
                               key={amount}
                               variant="outline"

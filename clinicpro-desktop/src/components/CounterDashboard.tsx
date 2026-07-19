@@ -269,15 +269,15 @@ const QueueTableSection: React.FC<QueueTableSectionProps> = ({
                       <span className="text-sm font-bold text-gray-900 font-mono">{ticket.queueNumber}</span>
                     </td>
                     <td className="px-4 py-3">
-                      {/* <div>
+                      <div>
                         <span className="text-sm font-medium text-gray-900">{ticket.patientName}</span>
                         {ticket.metadata && (ticket.metadata as any).patientProfileCode && (
-                          <div className="text-xs text-blue-600 mt-0.5">Hồ sơ: {(ticket.metadata as any).patientProfileCode}</div>
+                          <div className="text-xs text-blue-600 mt-0.5">HS: {(ticket.metadata as any).patientProfileCode}</div>
                         )}
                         {ticket.metadata && (ticket.metadata as any).appointmentCode && (
-                          <div className="text-xs text-green-600 mt-0.5">Lịch hẹn: {(ticket.metadata as any).appointmentCode}</div>
+                          <div className="text-xs text-green-600 mt-0.5">Hẹn: {(ticket.metadata as any).appointmentCode}</div>
                         )}
-                      </div> */}
+                      </div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className="text-sm text-gray-700">

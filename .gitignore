@@ -9,3 +9,5 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+TRELLO_STRUCTURE.txt
+CLINICPRO_STUDY_GUIDE.txt

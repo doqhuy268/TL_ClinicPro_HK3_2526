@@ -32,7 +32,15 @@ export default function LoginPage() {
       const res = await fetch(`${apiBaseUrl}/public/dev/quick-setup`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        alert("🚀 " + data.message + "\n\nBác sĩ: " + data.data.doctorEmail + "\nKTV: " + data.data.technicianEmail);
+        const d = data.data;
+        alert(
+          "🚀 " + data.message + "\n\n" +
+          "👨‍⚕️ Bác sĩ: " + d.doctorEmail + "\n" +
+          "🔧 KTV: " + d.technicianEmail + "\n" +
+          "🧑 Bệnh nhân: " + d.patientEmail + "\n\n" +
+          "🔑 Mật khẩu: " + (d.defaultPassword || "123456789") + "\n\n" +
+          "💡 Dùng email trên + mật khẩu để đăng nhập demo."
+        );
       } else {
         alert("❌ Lỗi setup: " + data.message);
       }

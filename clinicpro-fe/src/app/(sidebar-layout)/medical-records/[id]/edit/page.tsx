@@ -891,17 +891,7 @@ export default function EditMedicalRecordPage() {
             <Badge className={`${getStatusColor(medicalRecord.status)} text-xs`}>
               {getStatusText(medicalRecord.status)}
             </Badge>
-            {template.enableAutoDiagnosis && (
-              <Button
-                onClick={handlePredict}
-                variant="secondary"
-                className="flex items-center gap-2 text-sm"
-                disabled={isPredicting}
-              >
-                <Brain className="h-4 w-4" />
-                {isPredicting ? 'Đang chuẩn đoán...' : 'Chuẩn đoán tự động'}
-              </Button>
-            )}
+            {/* Ẩn nút Chuẩn đoán tự động - không thuộc phạm vi đề tài */}
             <Button
               onClick={() => router.push(`/medical-records/${recordId}/prescription`)}
               className="flex items-center gap-2 text-sm bg-green-600 hover:bg-green-700"
@@ -921,7 +911,8 @@ export default function EditMedicalRecordPage() {
         </div>
       </div>
 
-      {predictions.length > 0 && (
+      {/* Ẩn kết quả Chuẩn đoán tự động - không thuộc phạm vi đề tài */}
+      {false && predictions.length > 0 && (
         <Card className="mb-6">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-lg">
