@@ -1,3 +1,7 @@
+// Load .env before anything else - ensures JWT_SECRET is available when modules are loaded
+import { config } from 'dotenv';
+config({ path: '.env' });
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';

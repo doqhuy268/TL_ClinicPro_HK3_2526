@@ -11,3 +11,35 @@ coverage/
 Thumbs.db
 TRELLO_STRUCTURE.txt
 CLINICPRO_STUDY_GUIDE.txt
+
+# Build artifacts
+.webpack/
+out/
+*.tsbuildinfo
+
+# Nested duplicate directories (git rebase artifact)
+clinicpro-be/clinicpro-be/
+clinicpro-fe/clinicpro-fe/
+clinicpro-desktop/clinicpro-desktop/
+
+# Thesis documents (not part of the application)
+*.docx
+chuong_*.txt
+*.drawio
+*.puml
+CLINICPRO_ON_TAP.md
+~$*.docx
+
+# Utility scripts (development only)
+*.py
+*.ps1
+
+# Backup and temporary directories
+revita-fe-main (backup)/
+temp_git_repo/
+
+# Auto-generated
+next-env.d.ts
+
+# Thesis supplementary files
+phu_luc_thieu.txt
