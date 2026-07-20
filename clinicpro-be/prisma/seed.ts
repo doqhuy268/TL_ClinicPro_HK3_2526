@@ -4482,7 +4482,7 @@ async function main() {
   if (!doctorAuth) {
     doctorAuth = await prisma.auth.create({
       data: {
-        name: 'Trần Đình Kiên',
+        name: 'Nguyễn Văn An',
         dateOfBirth: new Date('2003-05-07'),
         email: 'doctor@gmail.com',
         phone: '0325421882',
@@ -4731,7 +4731,7 @@ async function main() {
   if (!receptionistAuth) {
     receptionistAuth = await prisma.auth.create({
       data: {
-        name: 'Lê Hoàng Khang',
+        name: 'Phạm Minh Tuấn',
         dateOfBirth: new Date('2003-01-01'),
         email: 'receptionist@gmail.com',
         phone: '0900000002',
@@ -5335,7 +5335,7 @@ async function main() {
   if (!adminAuth) {
     adminAuth = await prisma.auth.create({
       data: {
-        name: 'Trần Đình Kiên',
+        name: 'Nguyễn Văn An',
         dateOfBirth: new Date('2003-05-07'),
         email: 'admin@gmail.com',
         phone: '0325421881',

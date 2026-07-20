@@ -95,11 +95,11 @@ export function MainFooter() {
               </div>
               <div className="flex items-center space-x-3">
                 <Mail className="h-4 w-4 text-primary" />
-                <span className="text-gray-300 text-sm">kientrandinh.dev@gmail.com</span>
+                <span className="text-gray-300 text-sm">contact@clinicpro.vn</span>
               </div>
               <div className="flex items-center space-x-3">
                 <Mail className="h-4 w-4 text-primary" />
-                <span className="text-gray-300 text-sm">iamhoangkhang@icloud.com</span>
+                <span className="text-gray-300 text-sm">admin@clinicpro.vn</span>
               </div>
               <div className="flex items-start space-x-3">
                 <MapPin className="h-4 w-4 text-primary mt-0.5" />
@@ -116,7 +116,7 @@ export function MainFooter() {
         <div className="border-t border-gray-800 mt-8 pt-8">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <p className="text-gray-400 text-sm">
-              © 2024 ClinicPro. Tất cả quyền được bảo lưu.
+              © 2026 ClinicPro. Tất cả quyền được bảo lưu.
             </p>
             <div className="flex space-x-6 mt-4 md:mt-0">
               <Link href="/privacy" className="text-gray-400 hover:text-white transition-colors duration-200 text-sm">
