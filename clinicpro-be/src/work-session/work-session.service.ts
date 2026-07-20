@@ -156,8 +156,8 @@ export class WorkSessionService {
     const { startTime, endTime, serviceIds } = createWorkSessionDto;
 
     // Debug timezone
-    console.log('🔍 Debug timezone - Input startTime:', startTime);
-    console.log('🔍 Debug timezone - Input endTime:', endTime);
+    // console.log('🔍 Debug timezone - Input startTime:', startTime); // DEMO: disabled
+    // console.log('🔍 Debug timezone - Input endTime:', endTime); // DEMO: disabled
 
     let parsedStartTime: Date;
     let parsedEndTime: Date;
@@ -984,11 +984,11 @@ export class WorkSessionService {
     const timeFilter: Prisma.DateTimeFilter = {};
     if (typeof startDate === 'string') {
       timeFilter.gte = new Date(startDate);
-      console.log('🔍 Debug timeFilter - startDate:', timeFilter.gte);
+    // console.log('🔍 Debug timeFilter - startDate:', timeFilter.gte); // DEMO: disabled
     }
     if (typeof endDate === 'string') {
       timeFilter.lte = new Date(endDate);
-      console.log('🔍 Debug timeFilter - endDate:', timeFilter.lte);
+    // console.log('🔍 Debug timeFilter - endDate:', timeFilter.lte); // DEMO: disabled
     }
     if (Object.keys(timeFilter).length > 0) {
       where.startTime = timeFilter;

@@ -204,7 +204,8 @@ export class PrescriptionService {
             status: s.status || PrescriptionStatus.NOT_STARTED,
             order: s.order ?? index + 1,
             note: s.note ?? null,
-            doctorId: s.doctorId ?? null,
+            // Kế thừa doctorId từ phiếu chỉ định cha nếu service không chỉ định riêng
+            doctorId: s.doctorId ?? doctorId ?? null,
             technicianId: s.technicianId ?? null,
           })),
         },
@@ -432,15 +433,28 @@ export class PrescriptionService {
     const current = psList.find((s) => s.serviceId === serviceId);
     if (!current) throw new NotFoundException('Service not in prescription');
 
+    // Fallback: nếu service không có doctorId, kiểm tra doctorId của phiếu chỉ định cha
+    const parentPrescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      select: { doctorId: true },
+    });
+    const effectiveDoctorId = current.doctorId || parentPrescription?.doctorId;
+    const effectiveTechnicianId = current.technicianId;
+
     // Nếu đã có bác sĩ/kỹ thuật viên được gán sẵn → chuyển WAITING, ngược lại → PENDING
     const nextStatus =
-      current.doctorId || current.technicianId
+      effectiveDoctorId || effectiveTechnicianId
         ? PrescriptionStatus.WAITING
         : PrescriptionStatus.PENDING;
 
     await this.prisma.prescriptionService.update({
       where: { prescriptionId_serviceId: { prescriptionId, serviceId } },
-      data: { status: nextStatus },
+      data: {
+        status: nextStatus,
+        // Đồng thời cập nhật doctorId/technicianId nếu service chưa có
+        ...(effectiveDoctorId && !current.doctorId ? { doctorId: effectiveDoctorId } : {}),
+        ...(effectiveTechnicianId && !current.technicianId ? { technicianId: effectiveTechnicianId } : {}),
+      },
     });
 
     // Auto-start disabled: do not move any service to WAITING here
@@ -884,7 +898,7 @@ export class PrescriptionService {
     });
 
     // DEBUG: Log tất cả work sessions tìm thấy
-    console.log('=== DEBUG: All work sessions with APPROVED/IN_PROGRESS status ===');
+    // console.log('=== DEBUG: All work sessions with APPROVED/IN_PROGRESS status ==='); // DEMO: disabled
     console.log(`Total sessions found: ${allActiveSessions.length}`);
     console.log(`Current time (now): ${now.toISOString()}`);
     console.log(`Pending service IDs: ${Array.from(pendingServiceIds).join(', ')}`);
@@ -914,7 +928,7 @@ export class PrescriptionService {
       console.log(`  - Has matching service: ${hasMatchingService}`);
       console.log(`  - Session service IDs: ${sessionServiceIds.join(', ')}`);
     });
-    console.log('=== END DEBUG ===\n');
+    // console.log('=== END DEBUG ===\n'); // DEMO: disabled
 
     // Query work sessions với điều kiện đầy đủ
     // Lưu ý: 

@@ -461,9 +461,35 @@ export class ServiceService {
     }
 
     if (!doctor.specialtyId) {
-      throw new BadRequestException(
-        'Doctor does not have a primary specialty configured',
+      // Fallback: doctor has no specialty, return all active services
+      const { take, skip } = this.normalizePagination(
+        typeof (query as any).limit === 'number' ? (query as any).limit : undefined,
+        typeof (query as any).offset === 'number' ? (query as any).offset : undefined,
+        100,
       );
+      const where: Prisma.ServiceWhereInput = { isActive: true };
+      const [total, services] = await this.prisma.$transaction([
+        this.prisma.service.count({ where }),
+        this.prisma.service.findMany({
+          where,
+          include: this.serviceLocationInclude,
+          orderBy: [{ requiresDoctor: 'desc' }, { name: 'asc' }, { serviceCode: 'asc' }],
+          take,
+          skip,
+        }),
+      ]);
+      return {
+        doctor: {
+          id: doctor.id,
+          doctorCode: doctor.doctorCode,
+          name: doctor.auth?.name || '',
+          isActive: doctor.isActive,
+          specialty: null,
+          specialtyIds: [],
+        },
+        services,
+        pagination: { limit: take, offset: skip, total },
+      };
     }
 
     const specialtyIds = Array.from(
@@ -555,6 +581,25 @@ export class ServiceService {
       }),
     ]);
 
+    // Fallback: if specialty has no active services, return ALL active services
+    let finalServices = services;
+    let finalTotal = total;
+    if (services.length === 0 && !includeInactive && !keyword && requiresDoctorFilter === undefined) {
+      const fallbackWhere: Prisma.ServiceWhereInput = { isActive: true };
+      const [fbTotal, fbServices] = await this.prisma.$transaction([
+        this.prisma.service.count({ where: fallbackWhere }),
+        this.prisma.service.findMany({
+          where: fallbackWhere,
+          include: this.serviceLocationInclude,
+          orderBy: [{ requiresDoctor: 'desc' }, { name: 'asc' }, { serviceCode: 'asc' }],
+          skip,
+          take,
+        }),
+      ]);
+      finalServices = fbServices;
+      finalTotal = fbTotal;
+    }
+
     return {
       doctor: {
         id: doctor.id,
@@ -564,8 +609,8 @@ export class ServiceService {
         specialty: doctor.specialty,
         specialtyIds,
       },
-      services: services.map((s) => this.mapServiceToCompactFormat(s)),
-      pagination: this.buildPagination(total, take, skip),
+      services: finalServices.map((s) => this.mapServiceToCompactFormat(s)),
+      pagination: this.buildPagination(finalTotal, take, skip),
     };
   }
 
