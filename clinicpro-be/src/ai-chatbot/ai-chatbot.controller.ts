@@ -38,6 +38,7 @@ export class AiChatbotController {
    * Yêu cầu đăng nhập (JWT) để xác định role và scope dữ liệu.
    */
   @Post('chat')
+  @Public()
   @HttpCode(HttpStatus.OK)
   async chat(@Body() dto: ChatRequestDto): Promise<ChatResponseDto> {
     this.logger.log(`Chat: "${dto.message.substring(0, 50)}..."`);

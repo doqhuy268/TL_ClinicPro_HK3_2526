@@ -1027,11 +1027,11 @@ export class CounterAssignmentService {
       eld: ticket?.isElderly ? 'Y' : '',
     }));
 
-    console.log(`[queue-debug] ${context} - counter ${counterId}`);
+    // console.log(`[queue-debug] ${context} - counter ${counterId}`); // DEMO: disabled
     if (rows.length > 0) {
       console.table(rows);
     } else {
-      console.log('[queue-debug] Queue is currently empty');
+    // console.log('[queue-debug] Queue is currently empty'); // DEMO: disabled
     }
   }
 

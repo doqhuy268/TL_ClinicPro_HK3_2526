@@ -717,7 +717,7 @@ export class TakeNumberService {
    */
   private async logQueueSnapshot(counterId: string, queue: any[], context: string): Promise<void> {
     if (!Array.isArray(queue)) {
-      console.log(`[queue-debug] ${context} - counter ${counterId}: queue unavailable`);
+    // console.log(`[queue-debug] ${context} - counter ${counterId}: queue unavailable`); // DEMO: disabled
       return;
     }
 
@@ -758,11 +758,11 @@ export class TakeNumberService {
       chd: (ticket.patientAge < 6 || ticket.metadata?.isChild) ? 'Y' : '',
     }));
 
-    console.log(`[queue-debug] ${context} - counter ${counterId}`);
+    // console.log(`[queue-debug] ${context} - counter ${counterId}`); // DEMO: disabled
     if (rows.length > 0) {
       console.table(rows);
     } else {
-      console.log('[queue-debug] Queue is currently empty');
+    // console.log('[queue-debug] Queue is currently empty'); // DEMO: disabled
     }
   }
 

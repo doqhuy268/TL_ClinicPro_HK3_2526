@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   Query,
+  Headers,
   UseGuards,
   BadRequestException,
   Post,
@@ -266,10 +267,17 @@ export class AppointmentBookingController {
    * GET /appointment-booking/patient/appointments
    */
   @Get('patient/appointments')
-  @UseGuards(JwtAuthGuard) // Cần authentication để lấy thông tin patient
-  async getPatientAppointments(@Req() req: any) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const patientId = req.user.id; // Lấy patient ID từ JWT token
+  @Public()
+  async getPatientAppointments(@Headers('authorization') authHeader: string) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new BadRequestException('Thiếu token xác thực. Vui lòng đăng nhập.');
+    }
+    const token = authHeader.replace('Bearer ', '');
+    let patientId: string;
+    try {
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      patientId = payload.sub || payload.id;
+    } catch { throw new BadRequestException('Token không hợp lệ'); }
     return this.appointmentBookingService.getPatientAppointments(patientId);
   }
 
@@ -377,16 +385,22 @@ export class AppointmentBookingController {
    * POST /appointment-booking/appointments
    */
   @Post('appointments')
-  @UseGuards(JwtAuthGuard)
+  @Public()
   async bookAppointment(
     @Body() bookAppointmentDto: BookAppointmentDto,
-    @Req() req: any,
+    @Headers('authorization') authHeader: string,
   ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const bookerId = req.user.id; // Lấy user ID từ JWT token
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new BadRequestException('Thiếu token xác thực. Vui lòng đăng nhập.');
+    }
+    const token = authHeader.replace('Bearer ', '');
+    let bookerId: string;
+    try {
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      bookerId = payload.sub || payload.id;
+    } catch { throw new BadRequestException('Token không hợp lệ'); }
     return this.appointmentBookingService.bookAppointment(
       bookAppointmentDto,
-
       bookerId,
     );
   }

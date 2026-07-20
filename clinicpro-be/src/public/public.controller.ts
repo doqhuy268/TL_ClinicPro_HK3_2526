@@ -114,113 +114,95 @@ export class PublicController {
 
     const doctorId = doctorAuth.doctor.id;
     const techId = techAuth.technician.id;
-    const doctorSpecialtyId = doctorAuth.doctor.specialtyId;
 
     const now = new Date();
     const sessionStart = new Date(now.getTime() - 2 * 60 * 60 * 1000); // Now - 2h
     const sessionEnd = new Date(now.getTime() + 72 * 60 * 60 * 1000); // Now + 72h (3 ngày)
 
-    // 3. Dọn dẹp session cũ trong ngày của 2 user này để tranh conflict
-    const startOfToday = new Date(now.setHours(0, 0, 0, 0));
-    const next3Days = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+    // 3. Dọn dẹp session cũ
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const next3Days = new Date(startOfToday.getTime() + 72 * 60 * 60 * 1000);
     
-    await this.prisma.workSession.deleteMany({
-      where: {
-        OR: [
-          { doctorId: doctorId },
-          { technicianId: techId }
-        ],
-        startTime: { gte: startOfToday },
-        endTime: { lte: next3Days }
-      }
+    // Xóa work session services trước (foreign key constraint)
+    const oldSessions = await this.prisma.workSession.findMany({
+      where: { OR: [{ doctorId }, { technicianId: techId }], startTime: { gte: startOfToday } },
+      select: { id: true },
+    });
+    const oldIds = oldSessions.map(s => s.id);
+    if (oldIds.length > 0) {
+      await this.prisma.workSessionService.deleteMany({ where: { workSessionId: { in: oldIds } } });
+      await this.prisma.workSession.deleteMany({ where: { id: { in: oldIds } } });
+    }
+
+    // 4. Tạo work sessions cho TẤT CẢ bác sĩ đang hoạt động (để demo đặt lịch)
+    const allDoctors = await this.prisma.doctor.findMany({
+      where: { isActive: true },
+      take: 5,
     });
 
-    // 4. Tìm booth
-    const doctorBooth = await this.prisma.booth.findFirst({
+    const booth = await this.prisma.booth.findFirst({
       where: { isActive: true, isDeleted: false },
     });
-    
-    // Tìm booth thứ 2 cho KTV tránh trùng id nếu có thể
-    const techBooth = await this.prisma.booth.findFirst({
-      where: { isActive: true, isDeleted: false, id: doctorBooth ? { not: doctorBooth.id } : undefined },
-    });
 
-    // 5. Tạo dịch vụ
-    // Tìm dịch vụ thuộc khoa Bác sĩ, hoặc fallback sang các dịch vụ yêu cầu có bác sĩ nếu khoa này trống
-    let doctorServices = await this.prisma.service.findMany({
-      where: { specialtyId: doctorSpecialtyId },
-      take: 3,
-    });
+    for (const doc of allDoctors) {
+      let services = await this.prisma.service.findMany({
+        where: { specialtyId: doc.specialtyId },
+        take: 3,
+      });
+      if (!services || services.length === 0) {
+        services = await this.prisma.service.findMany({ take: 3 });
+      }
 
-    if (!doctorServices || doctorServices.length === 0) {
-      doctorServices = await this.prisma.service.findMany({
-        take: 3, // Bốc đại 3 dịch vụ bất kì vì database seed thiếu dịch vụ cho khoa này
+      // Xóa session cũ của bác sĩ này (cả services trước)
+      const oldDocSessions = await this.prisma.workSession.findMany({
+        where: { doctorId: doc.id, startTime: { gte: startOfToday } },
+        select: { id: true },
+      });
+      if (oldDocSessions.length > 0) {
+        await this.prisma.workSessionService.deleteMany({
+          where: { workSessionId: { in: oldDocSessions.map(s => s.id) } },
+        });
+        await this.prisma.workSession.deleteMany({
+          where: { id: { in: oldDocSessions.map(s => s.id) } },
+        });
+      }
+
+      await this.prisma.workSession.create({
+        data: {
+          doctorId: doc.id,
+          boothId: booth?.id,
+          startTime: sessionStart,
+          endTime: sessionEnd,
+          status: WorkSessionStatus.APPROVED,
+          services: {
+            create: services.map((s) => ({ serviceId: s.id })),
+          },
+        },
       });
     }
 
-    // Filter services that don't already have a valid work session link if needed, but it's new session anyway
-    const doctorServiceIds = doctorServices.map((s) => ({ serviceId: s.id }));
-
-    // Tech services
+    // Tech session
+    const techBooth = await this.prisma.booth.findFirst({
+      where: { isActive: true, isDeleted: false, id: booth ? { not: booth.id } : undefined },
+    });
     const techServices = await this.prisma.service.findMany({
       where: { requiresDoctor: false },
       take: 3,
     });
-    const techServiceIds = techServices.map((s) => ({ serviceId: s.id }));
+    await this.prisma.workSession.create({
+      data: {
+        technicianId: techId,
+        boothId: techBooth?.id || booth?.id,
+        startTime: sessionStart,
+        endTime: sessionEnd,
+        status: WorkSessionStatus.APPROVED,
+        services: {
+          create: techServices.map((s) => ({ serviceId: s.id })),
+        },
+      },
+    });
 
-    // Create session cho Doctor
-    if (doctorServiceIds.length > 0) {
-      await this.prisma.workSession.create({
-        data: {
-          doctorId: doctorId,
-          boothId: doctorBooth?.id,
-          startTime: sessionStart,
-          endTime: sessionEnd,
-          status: WorkSessionStatus.APPROVED,
-          services: {
-            create: doctorServiceIds,
-          },
-        },
-      });
-    } else {
-      await this.prisma.workSession.create({
-        data: {
-          doctorId: doctorId,
-          boothId: doctorBooth?.id,
-          startTime: sessionStart,
-          endTime: sessionEnd,
-          status: WorkSessionStatus.APPROVED,
-        },
-      });
-    }
-
-    // Create session cho Tech
-    if (techServiceIds.length > 0) {
-      await this.prisma.workSession.create({
-        data: {
-          technicianId: techId,
-          boothId: techBooth?.id,
-          startTime: sessionStart,
-          endTime: sessionEnd,
-          status: WorkSessionStatus.APPROVED,
-          services: {
-            create: techServiceIds,
-          },
-        },
-      });
-    } else {
-      await this.prisma.workSession.create({
-        data: {
-          technicianId: techId,
-          boothId: techBooth?.id,
-          startTime: sessionStart,
-          endTime: sessionEnd,
-          status: WorkSessionStatus.APPROVED,
-        },
-      });
-    }
-
-    return {
+return {
       success: true,
       message: 'Môi trường Test E2E đã sẵn sàng! Hãy tiến hành đặt lịch.',
       data: {

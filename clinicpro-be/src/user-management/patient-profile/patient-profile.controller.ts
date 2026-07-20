@@ -89,12 +89,12 @@ export class PatientProfileController {
   }
 
   @Get('patient/:patientId')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ADMIN, Role.RECEPTIONIST)
+  @Public()
   async findByPatient(
     @Param('patientId') patientId: string,
-    @Request() req: { user: JwtUserPayload },
+    @Request() req?: { user: JwtUserPayload },
   ) {
-    return await this.patientProfileService.findByPatient(patientId, req.user);
+    return await this.patientProfileService.findByPatient(patientId, req?.user);
   }
 
   @Get(':id')

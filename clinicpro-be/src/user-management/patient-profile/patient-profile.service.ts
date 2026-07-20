@@ -212,9 +212,9 @@ export class PatientProfileService {
     return patientProfile;
   }
 
-  async findByPatient(patientId: string, user: JwtUserPayload) {
+  async findByPatient(patientId: string, user?: JwtUserPayload) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
-    if (user.role === Role.PATIENT) {
+    if (user?.role === Role.PATIENT) {
       if (!user.patient?.id || user.patient.id !== patientId) {
         throw new ForbiddenException('Bạn chỉ có thể xem hồ sơ của chính mình');
       }
