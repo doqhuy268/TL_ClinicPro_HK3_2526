@@ -163,6 +163,7 @@ export default function InvoicesPage() {
   }>>([]);
   const [refreshingTransaction, setRefreshingTransaction] = useState(false);
   const [manualConfirming, setManualConfirming] = useState(false);
+  const [simulatingTestPayment, setSimulatingTestPayment] = useState(false);
   const previewTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const socketRef = useRef<Socket | null>(null);
@@ -1361,6 +1362,32 @@ export default function InvoicesPage() {
     }
   }, [createdInvoice, finalizePaidInvoice, user]);
 
+  const handleSimulateTestPayment = useCallback(async () => {
+    if (!createdInvoice || createdInvoice.paymentMethod !== 'TRANSFER') return;
+
+    setSimulatingTestPayment(true);
+    try {
+      const orderCode = createdInvoice.transaction?.orderCode;
+      const { data } = await cashierApi.simulateTestPayment({
+        invoiceCode: createdInvoice.invoiceCode,
+        orderCode,
+      });
+
+      if (data.paymentStatus && ['PAID', 'SUCCEEDED'].includes(data.paymentStatus)) {
+        finalizePaidInvoice(data);
+        toast.success('🧪 Đã mô phỏng thanh toán PayOS thành công!');
+        return;
+      }
+
+      toast.warning('Không thể xác nhận thanh toán test.');
+    } catch (err: any) {
+      console.error('Simulate test payment error:', err);
+      toast.error(err?.message || 'Không thể mô phỏng thanh toán test');
+    } finally {
+      setSimulatingTestPayment(false);
+    }
+  }, [createdInvoice, finalizePaidInvoice]);
+
   const handlePrint = (mode: 'invoice' | 'routing' | 'payment') => {
     setPrintMode(mode);
     setTimeout(() => {
@@ -1932,6 +1959,16 @@ export default function InvoicesPage() {
                     >
                       <CheckCircle2 className="h-4 w-4 mr-1" />
                       {manualConfirming ? 'Đang xác nhận...' : 'Xác nhận thủ công'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={handleSimulateTestPayment}
+                      disabled={simulatingTestPayment}
+                      className="bg-amber-600 hover:bg-amber-700"
+                    >
+                      <CheckCircle2 className="h-4 w-4 mr-1" />
+                      {simulatingTestPayment ? 'Đang mô phỏng...' : '🧪 Mô phỏng thanh toán (Test)'}
                     </Button>
                   </div>
 

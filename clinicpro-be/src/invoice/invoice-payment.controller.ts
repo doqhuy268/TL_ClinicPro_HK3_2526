@@ -94,6 +94,13 @@ export class InvoicePaymentController {
     }
   }
 
+  @Post('test/simulate-payment')
+  @Roles(Role.CASHIER)
+  @HttpCode(200)
+  async simulateTestPayment(@Body() dto: { invoiceCode: string; orderCode?: string }) {
+    return this.invoicePaymentService.simulateTestPayment(dto);
+  }
+
   @Get('history/:patientProfileId')
   @Roles(Role.CASHIER, Role.PATIENT)
   async getPaymentHistory(@Param('patientProfileId') patientProfileId: string) {

@@ -343,6 +343,10 @@ export const cashierApi = {
   confirmPayment: (data: { invoiceCode: string; cashierId: string; transactionId?: string }) =>
     api.post('/invoice-payments/confirm', data),
 
+  // TEST MODE: Simulate PayOS payment success
+  simulateTestPayment: (data: { invoiceCode: string; orderCode?: string }) =>
+    api.post('/invoice-payments/test/simulate-payment', data),
+
   // Get invoice by ID
   getInvoiceById: (invoiceId: string) =>
     api.get(`/invoice-payments/invoice-by-id/${encodeURIComponent(invoiceId)}`),

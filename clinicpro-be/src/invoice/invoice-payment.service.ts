@@ -856,6 +856,80 @@ export class InvoicePaymentService {
     });
   }
 
+  /**
+   * TEST MODE: Simulate a successful PayOS payment webhook.
+   * Directly marks the transaction as SUCCEEDED without calling real PayOS.
+   */
+  async simulateTestPayment(dto: {
+    invoiceCode: string;
+    orderCode?: string;
+  }): Promise<PaymentResult & { routingAssignments: any[] }> {
+    if (!this.payOsService.isTestMode()) {
+      throw new BadRequestException(
+        'Chức năng này chỉ khả dụng trong PAYOS_TEST_MODE.',
+      );
+    }
+
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { invoiceCode: dto.invoiceCode },
+      include: {
+        invoiceDetails: {
+          include: { service: true },
+        },
+        patientProfile: true,
+        paymentTransactions: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    if (invoice.isPaid) {
+      throw new BadRequestException('Invoice has already been paid');
+    }
+
+    if (invoice.paymentMethod !== PaymentMethod.TRANSFER) {
+      throw new BadRequestException('Chỉ hỗ trợ mô phỏng thanh toán chuyển khoản');
+    }
+
+    if (!invoice.paymentTransactions || invoice.paymentTransactions.length === 0) {
+      throw new BadRequestException(
+        'Không tìm thấy giao dịch chuyển khoản để mô phỏng. Vui lòng tạo thanh toán trước.',
+      );
+    }
+
+    const targetTransaction = invoice.paymentTransactions[0];
+
+    const transactionRecord = await this.prisma.paymentTransaction.update({
+      where: { id: targetTransaction.id },
+      data: {
+        status: PaymentTransactionStatus.SUCCEEDED,
+        paidAt: new Date(),
+        isVerified: true,
+        lastWebhookStatus: 'TEST_SIMULATED',
+        lastWebhookAt: new Date(),
+        lastWebhookPayload: {
+          simulated: true,
+          simulatedAt: new Date().toISOString(),
+          orderCode: dto.orderCode ?? targetTransaction.orderCode,
+        } as any,
+      },
+    });
+
+    this.logger.log(
+      `🧪 [TEST] Mô phỏng thanh toán thành công cho invoice=${dto.invoiceCode} transaction=${targetTransaction.id}`,
+    );
+
+    return this.completeInvoicePayment(invoice, {
+      cashierId: invoice.cashierId ?? undefined,
+      transaction: transactionRecord,
+      source: 'MANUAL',
+    });
+  }
+
   async refreshPaymentLink(
     invoiceCode: string,
     options: { returnUrl?: string; cancelUrl?: string; requesterId?: string },
@@ -949,7 +1023,10 @@ export class InvoicePaymentService {
     invoiceCode?: string;
   }> {
     if (!this.payOsService.isEnabled()) {
-      throw new BadRequestException('PayOS integration is not configured.');
+      // Allow test mode webhook simulation
+      if (!this.payOsService.isTestMode()) {
+        throw new BadRequestException('PayOS integration is not configured.');
+      }
     }
 
     this.logger.debug(
