@@ -1,0 +1,176 @@
+@startuml createUserSequence
+
+actor "Admin" as Admin
+
+boundary "Admin UI" as UI
+control "AdminController" as Controller
+entity "CodeGeneratorService" as CodeGen
+entity "bcrypt" as Bcrypt
+entity "EmailService" as Email
+entity "Auth" as Auth
+entity "Doctor" as Doctor
+entity "Patient" as Patient
+entity "Receptionist" as Receptionist
+entity "Cashier" as Cashier
+entity "Admin" as AdminModel
+
+Admin -> UI: Nhập thông tin user mới\n- name, dateOfBirth, gender\n- address, citizenId\n- email, phone, password\n- role, specialtyId, etc
+activate UI
+
+UI -> UI: Validate form data
+
+UI -> Controller: POST /admin/users\nCreateUserDto
+activate Controller
+
+Controller -> Controller: Validate required fields\nname, dateOfBirth, gender,\naddress, password, role
+
+alt Thiếu trường bắt buộc
+    Controller --> UI: 400 BadRequestException\nMissing required fields
+    deactivate Controller
+    UI --> Admin: Hiển thị lỗi
+    deactivate UI
+else Đầy đủ trường bắt buộc
+
+alt Có citizenId
+    Controller -> Auth: findUnique({ where: { citizenId } })
+    activate Auth
+    Auth --> Controller: Auth | null
+    deactivate Auth
+    
+    alt CitizenId đã tồn tại
+        Controller --> UI: 400 BadRequestException\nCitizenId already exists
+        deactivate Controller
+        UI --> Admin: Hiển thị lỗi trùng citizenId
+        deactivate UI
+    end
+end
+
+alt Có email
+    Controller -> Auth: findUnique({ where: { email } })
+    activate Auth
+    Auth --> Controller: Auth | null
+    deactivate Auth
+    
+    alt Email đã tồn tại
+        Controller --> UI: 400 BadRequestException\nEmail already exists
+        deactivate Controller
+        UI --> Admin: Hiển thị lỗi trùng email
+        deactivate UI
+    end
+end
+
+alt Có phone
+    Controller -> Auth: findUnique({ where: { phone } })
+    activate Auth
+    Auth --> Controller: Auth | null
+    deactivate Auth
+    
+    alt Phone đã tồn tại
+        Controller --> UI: 400 BadRequestException\nPhone already exists
+        deactivate Controller
+        UI --> Admin: Hiển thị lỗi trùng phone
+        deactivate UI
+    end
+end
+
+Controller -> Bcrypt: hash(password, 10)
+activate Bcrypt
+Bcrypt --> Controller: hashedPassword: string
+deactivate Bcrypt
+
+Controller -> Auth: create({ data: {...} })
+activate Auth
+Auth --> Controller: Auth
+deactivate Auth
+
+alt role = DOCTOR
+    alt Thiếu specialtyId
+        Controller --> UI: 400 BadRequestException\nMissing specialtyId for DOCTOR
+        deactivate Controller
+        UI --> Admin: Hiển thị lỗi thiếu specialtyId
+        deactivate UI
+    else Có specialtyId
+        Controller -> CodeGen: generateDoctorCode(name)
+        activate CodeGen
+        CodeGen --> Controller: doctorCode: string
+        deactivate CodeGen
+        
+        Controller -> Doctor: create({ data: {...} })
+        activate Doctor
+        Doctor --> Controller: Doctor
+        deactivate Doctor
+    end
+    
+else role = PATIENT
+    Controller -> CodeGen: generatePatientCode(name, dateOfBirth, gender)
+    activate CodeGen
+    CodeGen --> Controller: patientCode: string
+    deactivate CodeGen
+    
+    Controller -> Patient: create({ data: {...} })
+    activate Patient
+    Patient --> Controller: Patient
+    deactivate Patient
+    
+else role = RECEPTIONIST
+    Controller -> CodeGen: generateReceptionistCode(name)
+    activate CodeGen
+    CodeGen --> Controller: receptionistCode: string
+    deactivate CodeGen
+    
+    Controller -> Receptionist: create({ data: {...} })
+    activate Receptionist
+    Receptionist --> Controller: Receptionist
+    deactivate Receptionist
+    
+else role = CASHIER
+    Controller -> CodeGen: generateCashierCode(name)
+    activate CodeGen
+    CodeGen --> Controller: cashierCode: string
+    deactivate CodeGen
+    
+    Controller -> Cashier: create({ data: {...} })
+    activate Cashier
+    Cashier --> Controller: Cashier
+    deactivate Cashier
+    
+else role = ADMIN
+    Controller -> CodeGen: generateAdminCode(name)
+    activate CodeGen
+    CodeGen --> Controller: adminCode: string
+    deactivate CodeGen
+    
+    Controller -> AdminModel: create({ data: {...} })
+    activate AdminModel
+    AdminModel --> Controller: Admin
+    deactivate AdminModel
+    
+else Invalid role
+    Controller --> UI: 400 BadRequestException\nInvalid role
+    deactivate Controller
+    UI --> Admin: Hiển thị lỗi role không hợp lệ
+    deactivate UI
+end
+
+alt Có email
+    Controller -> Email: sendAccountCredentials({ email, name, username, password, role })
+    activate Email
+    Email --> Controller: boolean
+    deactivate Email
+end
+
+Controller --> UI: 200 OK\n{ auth: Auth, roleRecord: Doctor | Patient | Receptionist | Cashier | Admin }
+deactivate Controller
+
+UI --> Admin: Hiển thị thông báo\nUser created successfully\n- ID: xxx\n- Name: xxx\n- Role: xxx\n- Code: xxx
+deactivate UI
+
+Admin -> Admin: Xác nhận thành công
+
+alt Có email
+    Email -> Admin: User mới nhận email\nvới username và password
+end
+
+end
+
+@enduml

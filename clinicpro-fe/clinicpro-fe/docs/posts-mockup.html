@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mockup - Bài viết</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f8f9fa;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .post-card { border: 1px solid #dee2e6; border-radius: 4px; overflow: hidden; margin-bottom: 20px; background: white; }
+        .post-card.featured { border-color: #0d6efd; }
+        .post-image { width: 100%; height: 200px; background: #0d6efd; object-fit: cover; }
+        .compact-image { width: 100%; height: 160px; background: #0d6efd; }
+        .category-image, .series-image { width: 64px; height: 64px; background: #0d6efd; border-radius: 4px; flex-shrink: 0; }
+        .scroll-area { max-height: 400px; overflow-y: auto; }
+        .category-item, .series-item { padding: 12px; border: 1px solid #dee2e6; border-radius: 4px; margin-bottom: 10px; cursor: pointer; transition: all 0.2s; }
+        .category-item:hover, .series-item:hover { border-color: #0d6efd; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Search Bar -->
+        <div class="mb-4">
+            <div class="position-relative">
+                <input type="text" class="form-control ps-5" placeholder="Tìm kiếm bài viết...">
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- Main Content -->
+            <main class="col-lg-9">
+                <!-- Pinned Posts Section -->
+                <section class="mb-5">
+                    <h4 class="h5 mb-4 text-secondary">Bài viết ghim</h4>
+                    <div class="post-card featured">
+                        <div class="row g-0">
+                            <div class="col-md-4">
+                                <div class="post-image"></div>
+                            </div>
+                            <div class="col-md-8">
+                                <div class="p-3">
+                                    <div class="d-flex align-items-start gap-2 mb-2">
+                                        <h5 class="mb-0">Hướng dẫn chăm sóc sức khỏe tại nhà</h5>
+                                        <span class="badge bg-primary">Ghim</span>
+                                    </div>
+                                    <p class="text-muted small mb-3">
+                                        Bài viết này sẽ hướng dẫn bạn các cách chăm sóc sức khỏe tại nhà một cách hiệu quả và an toàn. Bao gồm các phương pháp phòng ngừa bệnh tật và duy trì sức khỏe tốt.
+                                    </p>
+                                    <div class="d-flex gap-3 small text-muted mb-2">
+                                        <span>15 tháng 11, 2025</span>
+                                        <span>125 lượt thích</span>
+                                        <span>23 bình luận</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-secondary">Sức khỏe</span>
+                                        <span class="badge bg-secondary">Chăm sóc</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-light text-dark border">#suckhoe</span>
+                                        <span class="badge bg-light text-dark border">#chamsoc</span>
+                                        <span class="badge bg-light text-dark border">#tunha</span>
+                                    </div>
+                                    <div class="small text-muted">Tác giả: BS. Nguyễn Văn A</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <hr class="my-4">
+
+                <!-- Top Posts Section -->
+                <section class="mb-5">
+                    <h4 class="h5 mb-4 text-secondary">Bài viết mới nhất</h4>
+                    <div class="row g-3">
+                        <!-- Compact Post 1 -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="compact-image"></div>
+                                <div class="card-body">
+                                    <h6 class="card-title">10 dấu hiệu cảnh báo sức khỏe</h6>
+                                    <p class="card-text small text-muted">Nhận biết các dấu hiệu cảnh báo sớm để bảo vệ sức khỏe của bạn...</p>
+                                    <div class="d-flex gap-3 small text-muted">
+                                        <span>14/11/2025</span>
+                                        <span>89 lượt thích</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Compact Post 2 -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="compact-image"></div>
+                                <div class="card-body">
+                                    <h6 class="card-title">Chế độ dinh dưỡng hợp lý</h6>
+                                    <p class="card-text small text-muted">Khám phá các nguyên tắc dinh dưỡng cơ bản cho một cuộc sống khỏe mạnh...</p>
+                                    <div class="d-flex gap-3 small text-muted">
+                                        <span>13/11/2025</span>
+                                        <span>67 lượt thích</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Compact Post 3 -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="compact-image"></div>
+                                <div class="card-body">
+                                    <h6 class="card-title">Tập thể dục đúng cách</h6>
+                                    <p class="card-text small text-muted">Hướng dẫn các bài tập phù hợp với từng độ tuổi và thể trạng...</p>
+                                    <div class="d-flex gap-3 small text-muted">
+                                        <span>12/11/2025</span>
+                                        <span>54 lượt thích</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Compact Post 4 -->
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="compact-image"></div>
+                                <div class="card-body">
+                                    <h6 class="card-title">Phòng ngừa bệnh tim mạch</h6>
+                                    <p class="card-text small text-muted">Các biện pháp phòng ngừa và chăm sóc sức khỏe tim mạch hiệu quả...</p>
+                                    <div class="d-flex gap-3 small text-muted">
+                                        <span>11/11/2025</span>
+                                        <span>42 lượt thích</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <hr class="my-4">
+
+                <!-- All Posts Section -->
+                <section>
+                    <div class="d-flex align-items-center gap-2 mb-4">
+                        <h4 class="h5 mb-0 text-secondary">Tất cả bài viết</h4>
+                        <span class="small text-muted">(45 bài viết)</span>
+                    </div>
+
+                    <!-- Post 1 -->
+                    <div class="post-card mb-3">
+                        <div class="row g-0">
+                            <div class="col-md-4">
+                                <div class="post-image"></div>
+                            </div>
+                            <div class="col-md-8">
+                                <div class="p-3">
+                                    <h5 class="mb-2">Khám sức khỏe định kỳ: Tại sao quan trọng?</h5>
+                                    <p class="text-muted small mb-3">
+                                        Khám sức khỏe định kỳ giúp phát hiện sớm các vấn đề sức khỏe và ngăn ngừa bệnh tật. Bài viết này sẽ giải thích tầm quan trọng và cách thực hiện.
+                                    </p>
+                                    <div class="d-flex gap-3 small text-muted mb-2">
+                                        <span>10 tháng 11, 2025</span>
+                                        <span>156 lượt thích</span>
+                                        <span>34 bình luận</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-secondary">Khám sức khỏe</span>
+                                        <span class="badge bg-secondary">Phòng ngừa</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-light text-dark border">#khamsuckhoe</span>
+                                        <span class="badge bg-light text-dark border">#phongngua</span>
+                                    </div>
+                                    <div class="small text-muted">Tác giả: BS. Trần Thị B</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Post 2 -->
+                    <div class="post-card mb-3">
+                        <div class="row g-0">
+                            <div class="col-md-4">
+                                <div class="post-image"></div>
+                            </div>
+                            <div class="col-md-8">
+                                <div class="p-3">
+                                    <h5 class="mb-2">Giảm stress trong cuộc sống hiện đại</h5>
+                                    <p class="text-muted small mb-3">
+                                        Stress là vấn đề phổ biến trong cuộc sống hiện đại. Tìm hiểu các phương pháp giảm stress hiệu quả và duy trì tinh thần tích cực.
+                                    </p>
+                                    <div class="d-flex gap-3 small text-muted mb-2">
+                                        <span>9 tháng 11, 2025</span>
+                                        <span>98 lượt thích</span>
+                                        <span>21 bình luận</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-secondary">Tâm lý</span>
+                                        <span class="badge bg-secondary">Sức khỏe tinh thần</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-light text-dark border">#stress</span>
+                                        <span class="badge bg-light text-dark border">#tamly</span>
+                                    </div>
+                                    <div class="small text-muted">Tác giả: BS. Lê Văn C</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Post 3 -->
+                    <div class="post-card mb-3">
+                        <div class="row g-0">
+                            <div class="col-md-4">
+                                <div class="post-image"></div>
+                            </div>
+                            <div class="col-md-8">
+                                <div class="p-3">
+                                    <h5 class="mb-2">Chăm sóc da đúng cách theo từng độ tuổi</h5>
+                                    <p class="text-muted small mb-3">
+                                        Mỗi độ tuổi cần có cách chăm sóc da khác nhau. Hướng dẫn chi tiết về skincare routine phù hợp với từng giai đoạn cuộc đời.
+                                    </p>
+                                    <div class="d-flex gap-3 small text-muted mb-2">
+                                        <span>8 tháng 11, 2025</span>
+                                        <span>134 lượt thích</span>
+                                        <span>28 bình luận</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-secondary">Làm đẹp</span>
+                                        <span class="badge bg-secondary">Chăm sóc da</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="badge bg-light text-dark border">#skincare</span>
+                                        <span class="badge bg-light text-dark border">#lamdep</span>
+                                    </div>
+                                    <div class="small text-muted">Tác giả: BS. Phạm Thị D</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pagination -->
+                    <nav class="mt-4">
+                        <ul class="pagination justify-content-center">
+                            <li class="page-item disabled">
+                                <button class="page-link">Trang trước</button>
+                            </li>
+                            <li class="page-item active">
+                                <span class="page-link">1</span>
+                            </li>
+                            <li class="page-item">
+                                <button class="page-link">2</button>
+                            </li>
+                            <li class="page-item">
+                                <button class="page-link">3</button>
+                            </li>
+                            <li class="page-item">
+                                <button class="page-link">Trang sau</button>
+                            </li>
+                        </ul>
+                    </nav>
+                </section>
+            </main>
+
+            <!-- Sidebar -->
+            <aside class="col-lg-3">
+                <!-- Categories -->
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title mb-3">Danh mục</h6>
+                        <div class="scroll-area">
+                            <div class="category-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="category-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Sức khỏe tổng quát</div>
+                                        <div class="small text-muted">Các bài viết về sức khỏe và phòng ngừa bệnh tật</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="category-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="category-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Dinh dưỡng</div>
+                                        <div class="small text-muted">Chế độ ăn uống và dinh dưỡng hợp lý</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="category-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="category-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Tập luyện</div>
+                                        <div class="small text-muted">Các bài tập và vận động thể chất</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="category-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="category-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Tâm lý</div>
+                                        <div class="small text-muted">Sức khỏe tinh thần và tâm lý học</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="category-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="category-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Làm đẹp</div>
+                                        <div class="small text-muted">Chăm sóc da và làm đẹp</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Series -->
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title mb-3">Series bài viết</h6>
+                        <div class="scroll-area">
+                            <div class="series-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="series-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Hướng dẫn chăm sóc sức khỏe</div>
+                                        <div class="small text-muted">Series các bài viết về chăm sóc sức khỏe hàng ngày</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="series-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="series-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Dinh dưỡng khoa học</div>
+                                        <div class="small text-muted">Kiến thức về dinh dưỡng và chế độ ăn uống</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="series-item">
+                                <div class="d-flex gap-3 align-items-center">
+                                    <div class="series-image"></div>
+                                    <div>
+                                        <div class="fw-bold small mb-1">Yoga và thiền định</div>
+                                        <div class="small text-muted">Các bài tập yoga và phương pháp thiền định</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

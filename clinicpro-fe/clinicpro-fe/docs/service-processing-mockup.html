@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mockup - Xử lý dịch vụ</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; }
+        .header { margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }
+        .card { background: white; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; }
+        .card-title { font-weight: bold; margin-bottom: 10px; }
+        .input { width: 100%; padding: 8px; border: 1px solid #ddd; margin-bottom: 10px; }
+        .btn { padding: 8px 16px; background: #0066cc; color: white; border: none; cursor: pointer; }
+        .btn-secondary { background: #666; }
+        .btn-success { background: #28a745; }
+        .btn-outline { background: white; border: 1px solid #ddd; color: #333; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 11px; }
+        .badge-default { background: #0066cc; color: white; }
+        .badge-success { background: #28a745; color: white; }
+        .badge-warning { background: #ffc107; color: #000; }
+        .badge-secondary { background: #6c757d; color: white; }
+        .service-item { padding: 10px; border: 1px solid #ddd; margin-bottom: 10px; }
+        .queue-item { padding: 10px; border: 1px solid #ddd; margin-bottom: 10px; }
+        .queue-number { width: 30px; height: 30px; border-radius: 50%; background: #0066cc; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>Xử lý dịch vụ</h1>
+        </div>
+
+        <!-- Quản lý phiên làm việc -->
+        <div class="card">
+            <div class="card-title">Quản lý phiên làm việc</div>
+            <button class="btn btn-outline">Xem ca làm việc hôm nay</button>
+            <div style="margin-top: 10px; padding: 10px; background: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 4px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Ca làm việc hiện tại:</div>
+                <div>Phòng 101 - Buồng 1</div>
+            </div>
+        </div>
+
+        <!-- Thông tin ca làm việc -->
+        <div class="card">
+            <div class="card-title">Thông tin ca làm việc</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Phòng</div>
+                    <div style="font-weight: bold;">Phòng 101</div>
+                    <div style="font-size: 12px; color: #666;">R101</div>
+                </div>
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Buồng</div>
+                    <div style="font-weight: bold;">Buồng 1</div>
+                    <div style="font-size: 12px; color: #666;">B001</div>
+                </div>
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Thời gian</div>
+                    <div style="font-weight: bold;">08:00 - 12:00</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quét phiếu chỉ định -->
+        <div class="card">
+            <div class="card-title">Quét phiếu chỉ định</div>
+            <div style="display: flex; gap: 10px;">
+                <input type="text" class="input" placeholder="Mã phiếu chỉ định" style="flex: 1;">
+                <button class="btn btn-outline">Quét QR</button>
+                <button class="btn">Tìm kiếm</button>
+            </div>
+        </div>
+
+        <!-- Thông tin phiếu chỉ định -->
+        <div class="card">
+            <div class="card-title">Thông tin phiếu chỉ định</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Mã phiếu</div>
+                    <div style="font-weight: bold;">PRE-20241103-001</div>
+                </div>
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Trạng thái</div>
+                    <span class="badge badge-success">Đã tạo</span>
+                </div>
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Bệnh nhân</div>
+                    <div style="font-weight: bold;">Nguyễn Văn A</div>
+                </div>
+                <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Bác sĩ</div>
+                    <div style="font-weight: bold;">BS. Nguyễn Văn B</div>
+                </div>
+            </div>
+            <div style="border-top: 1px solid #ddd; padding-top: 15px;">
+                <div style="font-weight: bold; margin-bottom: 10px;">Dịch vụ (2)</div>
+                
+                <!-- Service 1 -->
+                <div class="service-item">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding: 8px; background: #f5f5f5;">
+                        <div>
+                            <span class="badge badge-success">WAITING</span>
+                            <span style="font-size: 12px; color: #666;">#1</span>
+                            <strong>Khám tổng quát</strong>
+                        </div>
+                        <div>
+                            <button class="btn" style="padding: 5px 10px; font-size: 12px;">Bắt đầu</button>
+                        </div>
+                    </div>
+                    <div style="font-size: 12px; color: #666;">Mô tả dịch vụ khám tổng quát</div>
+                    <div style="font-size: 11px; color: #999;">SVC-001</div>
+                </div>
+
+                <!-- Service 2 -->
+                <div class="service-item">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding: 8px; background: #f5f5f5;">
+                        <div>
+                            <span class="badge badge-warning">SERVING</span>
+                            <span style="font-size: 12px; color: #666;">#2</span>
+                            <strong>Xét nghiệm máu</strong>
+                        </div>
+                        <div>
+                            <button class="btn btn-outline" style="padding: 5px 10px; font-size: 12px; margin-right: 5px;">Chờ kết quả</button>
+                            <button class="btn btn-success" style="padding: 5px 10px; font-size: 12px;">Hoàn thành</button>
+                        </div>
+                    </div>
+                    <div style="font-size: 12px; color: #666;">Xét nghiệm công thức máu</div>
+                    <div style="font-size: 11px; color: #999;">SVC-002</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hàng chờ hôm nay -->
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+                <div class="card-title">Hàng chờ hôm nay (5)</div>
+                <button class="btn btn-success" style="padding: 5px 15px; font-size: 12px;">Gọi bệnh nhân tiếp theo</button>
+            </div>
+            
+            <div class="grid">
+                <!-- Cột 1: Hàng chờ thường -->
+                <div>
+                    <div style="margin-bottom: 10px;">
+                        <span class="badge badge-default">Hàng chờ thường</span>
+                        <span style="font-size: 12px; color: #666;">(4)</span>
+                    </div>
+                    
+                    <!-- Queue Item 1 -->
+                    <div class="queue-item">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span class="queue-number">1</span>
+                                <div>
+                                    <div style="font-weight: bold; font-size: 14px;">Nguyễn Văn A</div>
+                                    <div style="font-size: 11px; color: #666;">PRE-20241103-001</div>
+                                </div>
+                            </div>
+                            <div>
+                                <span class="badge badge-warning">SERVING</span>
+                                <button class="btn btn-outline" style="padding: 3px 8px; font-size: 11px; margin-left: 5px;">Bỏ qua</button>
+                            </div>
+                        </div>
+                        <div style="font-size: 11px; color: #666;">#1 Khám tổng quát (SERVING) • #2 Xét nghiệm máu (WAITING)</div>
+                        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                            <button class="btn btn-outline" style="padding: 5px 10px; font-size: 11px; margin-right: 5px;">Chờ kết quả</button>
+                            <button class="btn btn-success" style="padding: 5px 10px; font-size: 11px;">Hoàn thành</button>
+                        </div>
+                    </div>
+
+                    <!-- Queue Item 2 -->
+                    <div class="queue-item">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span class="queue-number">2</span>
+                                <div>
+                                    <div style="font-weight: bold; font-size: 14px;">Trần Thị B</div>
+                                    <div style="font-size: 11px; color: #666;">PRE-20241103-002</div>
+                                </div>
+                            </div>
+                            <div>
+                                <span class="badge badge-secondary">WAITING</span>
+                                <button class="btn btn-outline" style="padding: 3px 8px; font-size: 11px; margin-left: 5px;">Bỏ qua</button>
+                            </div>
+                        </div>
+                        <div style="font-size: 11px; color: #666;">#1 Siêu âm bụng (WAITING)</div>
+                    </div>
+
+                    <!-- Queue Item 3 -->
+                    <div class="queue-item">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span class="queue-number">3</span>
+                                <div>
+                                    <div style="font-weight: bold; font-size: 14px;">Lê Văn C</div>
+                                    <div style="font-size: 11px; color: #666;">PRE-20241103-003</div>
+                                </div>
+                            </div>
+                            <div>
+                                <span class="badge badge-secondary">WAITING</span>
+                                <button class="btn btn-outline" style="padding: 3px 8px; font-size: 11px; margin-left: 5px;">Bỏ qua</button>
+                            </div>
+                        </div>
+                        <div style="font-size: 11px; color: #666;">#1 Chụp X-quang (WAITING)</div>
+                    </div>
+                </div>
+
+                <!-- Cột 2: Chờ kết quả -->
+                <div>
+                    <div style="margin-bottom: 10px;">
+                        <span class="badge badge-secondary" style="background: #17a2b8; color: white;">Chờ kết quả</span>
+                        <span style="font-size: 12px; color: #666;">(1)</span>
+                    </div>
+                    
+                    <!-- Queue Item Waiting Result -->
+                    <div class="queue-item">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span class="queue-number" style="background: #17a2b8;">4</span>
+                                <div>
+                                    <div style="font-weight: bold; font-size: 14px;">Phạm Thị D</div>
+                                    <div style="font-size: 11px; color: #666;">PRE-20241103-004</div>
+                                </div>
+                            </div>
+                            <div>
+                                <span class="badge badge-secondary" style="background: #17a2b8; color: white;">WAITING_RESULT</span>
+                            </div>
+                        </div>
+                        <div style="font-size: 11px; color: #666;">#1 Xét nghiệm máu (WAITING_RESULT)</div>
+                        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                            <button class="btn btn-outline" style="padding: 5px 10px; font-size: 11px; width: 100%;">Cập nhật kết quả</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

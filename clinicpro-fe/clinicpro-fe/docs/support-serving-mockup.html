@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mockup - Quầy hỗ trợ thực hiện dịch vụ</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .card-content {
+            padding: 20px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+            margin-bottom: 15px;
+        }
+
+        .input-field {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-outline {
+            background-color: white;
+            color: #007bff;
+            border: 1px solid #007bff;
+        }
+
+        .btn-outline:hover {
+            background-color: #f0f0f0;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .error-message {
+            color: #dc3545;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .info-text {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .info-text .highlight {
+            font-weight: bold;
+            color: #333;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            color: #333;
+        }
+
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .action-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .action-hint {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .result-card {
+            margin-top: 20px;
+        }
+
+        .result-item {
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .result-item .label {
+            font-weight: bold;
+        }
+
+        .separator {
+            height: 1px;
+            background-color: #e0e0e0;
+            margin: 15px 0;
+        }
+
+        /* QR Scanner Dialog */
+        .dialog-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .dialog-overlay.active {
+            display: flex;
+        }
+
+        .dialog-content {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .dialog-header {
+            margin-bottom: 20px;
+        }
+
+        .dialog-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .dialog-description {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .qr-scanner-area {
+            width: 100%;
+            aspect-ratio: 1;
+            background-color: #000;
+            border-radius: 8px;
+            position: relative;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .qr-scanner-placeholder {
+            text-align: center;
+        }
+
+        .scan-hint {
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        .dialog-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Main Card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Quầy hỗ trợ thực hiện dịch vụ</div>
+            </div>
+            <div class="card-content">
+                <!-- Input Section -->
+                <div class="input-group">
+                    <input 
+                        type="text" 
+                        class="input-field" 
+                        placeholder="Nhập mã phiếu chỉ định (PRE... hoặc PR-...)"
+                        value=""
+                    >
+                    <button class="btn btn-primary">Xem dịch vụ chờ</button>
+                    <button class="btn btn-outline" onclick="openQrScanner()">📷 Quét QR</button>
+                </div>
+
+                <!-- Error Message (hidden by default) -->
+                <!-- <div class="error-message">Lỗi: Không thể lấy thông tin phiếu chỉ định</div> -->
+
+                <!-- Pending Services Section (shown when data exists) -->
+                <div style="display: none;" id="pending-section">
+                    <div class="info-text">
+                        Mã phiếu: <span class="highlight">PRE-20240101-001</span> · 
+                        Trạng thái: <span class="highlight">PENDING</span> · 
+                        Tổng dịch vụ chờ: <span class="highlight">3</span>
+                    </div>
+
+                    <!-- Pending Services Table -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title" style="font-size: 16px;">Danh sách dịch vụ PENDING</div>
+                        </div>
+                        <div class="card-content">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Tên dịch vụ</th>
+                                        <th>Service ID</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>1</td>
+                                        <td>Xét nghiệm máu</td>
+                                        <td style="font-size: 12px; color: #666;">SRV-001</td>
+                                    </tr>
+                                    <tr>
+                                        <td>2</td>
+                                        <td>Chụp X-quang ngực</td>
+                                        <td style="font-size: 12px; color: #666;">SRV-002</td>
+                                    </tr>
+                                    <tr>
+                                        <td>3</td>
+                                        <td>Siêu âm bụng</td>
+                                        <td style="font-size: 12px; color: #666;">SRV-003</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Assign Next Service Button -->
+                    <div class="action-section">
+                        <button class="btn btn-primary">Gán dịch vụ tiếp theo</button>
+                        <span class="action-hint">Gán dịch vụ có thứ tự nhỏ nhất cho phiên làm việc phù hợp</span>
+                    </div>
+
+                    <!-- Assignment Result (shown when assignment is done) -->
+                    <div class="card result-card" style="display: none;" id="result-section">
+                        <div class="card-header">
+                            <div class="card-title" style="font-size: 16px;">Kết quả gán</div>
+                        </div>
+                        <div class="card-content">
+                            <div class="result-item">
+                                Đã chuyển dịch vụ <span class="label">SRV-001</span> sang trạng thái <span class="label">ASSIGNED</span>
+                            </div>
+                            <div class="separator"></div>
+                            <div class="result-item">
+                                Phiên được chọn: <span class="label">WS-20240101-001</span> · 
+                                Bác sĩ: <span class="label">DOC-001</span>
+                            </div>
+                            <div class="result-item" style="font-size: 12px; color: #666;">
+                                Thời gian: 01/01/2024 08:00 - 01/01/2024 12:00
+                            </div>
+                            <div class="result-item" style="font-size: 14px; color: #666;">
+                                Ảnh chụp hàng đợi: 5 bệnh nhân
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- QR Scanner Dialog -->
+    <div class="dialog-overlay" id="qr-dialog" onclick="closeQrScannerOnOverlay(event)">
+        <div class="dialog-content" onclick="event.stopPropagation()">
+            <div class="dialog-header">
+                <div class="dialog-title">
+                    <span>📷</span>
+                    Quét mã QR phiếu chỉ định
+                </div>
+                <div class="dialog-description">
+                    Đưa mã QR của phiếu chỉ định (PRE... hoặc PR-...) vào khung hình để quét tự động
+                </div>
+            </div>
+            
+            <div class="qr-scanner-area">
+                <div class="qr-scanner-placeholder">
+                    <div style="font-size: 48px; margin-bottom: 10px;">📷</div>
+                    <div>Camera preview</div>
+                    <div style="margin-top: 20px; border: 2px solid white; width: 80%; height: 80%; position: absolute; border-radius: 8px;"></div>
+                </div>
+            </div>
+            
+            <div class="scan-hint" id="scan-hint">
+                Đang khởi động camera...
+            </div>
+            
+            <div class="dialog-actions">
+                <button class="btn btn-outline" onclick="closeQrScanner()">Đóng</button>
+                <button class="btn btn-primary" onclick="restartScanner()">Khởi động lại</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openQrScanner() {
+            document.getElementById('qr-dialog').classList.add('active');
+            document.getElementById('scan-hint').textContent = 'Đưa mã QR vào trong khung...';
+        }
+
+        function closeQrScanner() {
+            document.getElementById('qr-dialog').classList.remove('active');
+        }
+
+        function closeQrScannerOnOverlay(event) {
+            if (event.target.id === 'qr-dialog') {
+                closeQrScanner();
+            }
+        }
+
+        function restartScanner() {
+            document.getElementById('scan-hint').textContent = 'Đang khởi động camera...';
+            setTimeout(() => {
+                document.getElementById('scan-hint').textContent = 'Đưa mã QR vào trong khung...';
+            }, 1000);
+        }
+
+        // Demo: Show pending section (for mockup purposes)
+        // In real app, this would be controlled by API response
+        setTimeout(() => {
+            // Uncomment to show pending section
+            // document.getElementById('pending-section').style.display = 'block';
+        }, 1000);
+    </script>
+</body>
+</html>

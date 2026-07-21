@@ -1,0 +1,106 @@
+@startuml createServiceSequence
+
+actor "Quản lý" as Admin
+
+boundary "Admin UI" as UI
+control "ServiceController" as Controller
+entity "ServiceService" as Service
+entity "Service" as ServiceEntity
+entity "Category" as Category
+entity "Specialty" as Specialty
+
+
+Admin -> UI: Chọn Thêm dịch vụ
+activate UI
+
+UI --> Admin: Hiển thị form\nthêm dịch vụ
+deactivate UI
+
+Admin -> UI: Điền thông tin:\nname, price, description,\ndurationMinutes, unit, currency,\ncategoryId, specialtyId,\nrequiresDoctor, isActive
+activate UI
+
+UI -> UI: validateForm(name, price)
+
+alt Validation thất bại
+    UI --> Admin: Hiển thị lỗi\nthiếu thông tin bắt buộc
+    deactivate UI
+else Validation thành công
+    Admin -> UI: Nhấn Tạo dịch vụ
+
+    UI -> Controller: POST /services/management/services\nname, price, description,\ndurationMinutes, unit, currency,\ncategoryId, specialtyId,\nrequiresDoctor, isActive
+    activate Controller
+
+    Controller -> Service: createService(name, price, description,\ndurationMinutes, unit, currency,\ncategoryId, specialtyId,\nrequiresDoctor, isActive)
+    activate Service
+
+    alt Có categoryId
+        Service -> Category: findUnique(categoryId)
+        activate Category
+        Category --> Service: Category hoặc null
+        deactivate Category
+
+        alt Category không tồn tại
+            Service --> Controller: Error category not found
+            Controller --> UI: 400 Bad Request
+            UI --> Admin: Hiển thị lỗi\ncategory không tồn tại
+            deactivate UI
+            deactivate Controller
+            deactivate Service
+        end
+    end
+
+    alt Có specialtyId
+        Service -> Specialty: findUnique(specialtyId)
+        activate Specialty
+        Specialty --> Service: Specialty hoặc null
+        deactivate Specialty
+
+        alt Specialty không tồn tại
+            Service --> Controller: Error specialty not found
+            Controller --> UI: 400 Bad Request
+            UI --> Admin: Hiển thị lỗi\nspecialty không tồn tại
+            deactivate UI
+            deactivate Controller
+            deactivate Service
+        end
+    end
+
+    Service -> Service: generateUniqueServiceCode() -> serviceCode
+
+    Service -> ServiceEntity: create(serviceCode, name, price,\ndescription, durationMinutes, unit,\ncurrency, isActive, categoryId,\nspecialtyId, requiresDoctor)
+    activate ServiceEntity
+
+    alt Database error
+        ServiceEntity --> Service: Error duplicate code\nhoặc constraint violation
+        deactivate ServiceEntity
+
+        Service --> Controller: Error cannot create service
+        deactivate Service
+
+        Controller --> UI: 500 Internal Server Error
+        deactivate Controller
+
+        UI --> Admin: Hiển thị lỗi\nkhông thể tạo dịch vụ
+        deactivate UI
+    else Success
+        ServiceEntity --> Service: Service created với id
+        deactivate ServiceEntity
+
+        Service -> ServiceEntity: findByIdWithRelations(id)
+        activate ServiceEntity
+        ServiceEntity --> Service: Service với category, specialty
+        deactivate ServiceEntity
+
+        Service --> Controller: Service created
+        deactivate Service
+
+        Controller --> UI: 200 OK service data
+        deactivate Controller
+
+        UI --> Admin: Hiển thị thông báo\ntạo dịch vụ thành công\nvà thông tin dịch vụ mới
+        deactivate UI
+    end
+end
+
+@enduml
+

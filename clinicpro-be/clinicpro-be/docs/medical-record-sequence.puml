@@ -1,0 +1,82 @@
+@startuml Medical Record Sequence Diagram
+!theme plain
+actor "Doctor" as D
+boundary "Frontend" as F
+control "MedicalRecordController" as C
+control "MedicalRecordService" as M
+entity "MedicalRecord" as MR
+entity "PatientProfile" as PP
+entity "Template" as T
+entity "MedicalRecordHistory" as MRH
+
+
+D -> F: Select patient
+F -> C: GET /medical-record/templates
+C -> C: validateRequest()
+C -> M: getTemplates()
+M -> T: findAllTemplates()
+T -> T: prisma.template.findMany()
+T --> M: templates\n(all available templates with fields)
+M --> C: response\n(templates list with specialty info)
+C --> F: response\n(templates array)
+F --> D: Display templates list
+
+D -> F: Select template and create record
+F -> C: POST /medical-record/create
+note right: CreateMedicalRecordDto
+C -> C: validateCreateMedicalRecordDto(dto)
+C -> M: create(createMedicalRecordDto, user)
+M -> M: checkCreatePermission(user)
+
+alt Has permission
+  M -> M: extractDoctorId(user)
+  M -> PP: validatePatientProfile(patientProfileId)
+  PP -> PP: prisma.patientProfile.findUnique()
+  PP --> M: patientProfile\n(patient profile details)
+  
+  M -> M: generateMedicalRecordCode()
+  M -> MR: createMedicalRecord(data)
+  MR -> MR: prisma.medicalRecord.create()
+  MR --> M: medicalRecord\n(new medical record with content)
+  
+  M -> MRH: createHistoryRecord(medicalRecordId, action)
+  MRH -> MRH: prisma.medicalRecordHistory.create()
+  MRH --> M: history\n(history entry for audit trail)
+  
+  M --> C: response\n(created medical record with all details)
+  C --> F: response\n(medical record data)
+  F --> D: Display success message
+  
+else No permission
+  M --> C: throw ForbiddenException()
+  C --> F: error\n(insufficient permissions message)
+  F --> D: Display permission error
+end
+
+
+D -> F: View medical records
+F -> C: GET /medical-record?page=1&limit=10
+C -> C: validatePaginationParams(page, limit)
+C -> M: findAll(user, page, limit)
+M -> M: checkDoctorRole(user)
+M -> MR: findByDoctorId(user.id, page, limit)
+MR -> MR: prisma.medicalRecord.findMany()
+MR --> M: medicalRecords\n(doctor's medical records)
+M -> M: formatPaginationResponse(data, page, limit)
+M --> C: response\n(paginated records with total count)
+C --> F: response\n(medical records with pagination)
+F --> D: Display medical records list
+
+D -> F: Select record to view details
+F -> C: GET /medical-record/:id
+C -> C: validateId(id)
+C -> M: findOne(id, user)
+M -> MR: findById(id)
+MR -> MR: prisma.medicalRecord.findUnique()
+MR --> M: medicalRecord\n(medical record with template and content)
+M -> M: checkViewPermission(medicalRecord, user)
+M --> C: response\n(medical record details with history)
+C --> F: response\n(complete medical record)
+F --> D: Display medical record details
+
+@enduml

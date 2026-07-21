@@ -1,0 +1,184 @@
+' Toàn cục
+skinparam defaultFontName "Times New Roman"
+skinparam defaultFontSize 12
+
+' (Tuỳ chọn) từng loại biểu đồ
+skinparam sequence {
+  FontName "Times New Roman"
+}
+skinparam class {
+  FontName "Times New Roman"
+}
+skinparam activity {
+  FontName "Times New Roman"
+}
+skinparam usecase {
+  FontName "Times New Roman"
+}
+
+
+@startuml createPackageSequence
+
+actor "Quản lý" as Admin
+
+boundary "Admin UI" as UI
+control "ServiceController" as Controller
+entity "ServiceService" as Service
+entity "Package" as Package
+entity "PackageItem" as PackageItem
+entity "Service" as ServiceEntity
+entity "Category" as Category
+entity "Specialty" as Specialty
+
+Admin -> UI: Chọn Thêm gói dịch vụ
+activate UI
+
+UI --> Admin: Hiển thị form\nthêm gói dịch vụ
+deactivate UI
+
+Admin -> UI: Điền thông tin cơ bản:\nname, price, description,\ncategoryId, specialtyId,\nrequiresDoctor, isActive
+activate UI
+
+loop Thêm dịch vụ vào gói
+    Admin -> UI: Nhấn Thêm dịch vụ
+
+    UI --> Admin: Hiển thị danh sách\ndịch vụ có sẵn
+
+    Admin -> UI: Chọn dịch vụ\nvà điền thông tin:\nquantity, priceOverride,\nrequired, sortOrder, notes
+
+    UI -> UI: Thêm vào danh sách items
+end
+
+UI -> UI: validateForm(name, price)
+
+alt Validation thất bại
+    UI --> Admin: Hiển thị lỗi\nthiếu thông tin bắt buộc
+    deactivate UI
+else Validation thành công
+    Admin -> UI: Nhấn Tạo gói dịch vụ
+
+    UI -> Controller: POST /services/management/packages\nname, price, description,\ncategoryId, specialtyId,\nrequiresDoctor, isActive, items
+    activate Controller
+
+    Controller -> Service: createPackage(name, price, description,\ncategoryId, specialtyId, requiresDoctor,\nisActive, items)
+    activate Service
+
+    alt Có categoryId
+        Service -> Category: findUnique(categoryId)
+        activate Category
+        Category --> Service: Category hoặc null
+        deactivate Category
+
+        alt Category không tồn tại
+            Service --> Controller: Error category not found
+            Controller --> UI: 400 Bad Request
+            UI --> Admin: Hiển thị lỗi\ncategory không tồn tại
+            deactivate UI
+            deactivate Controller
+            deactivate Service
+        end
+    end
+
+    alt Có specialtyId
+        Service -> Specialty: findUnique(specialtyId)
+        activate Specialty
+        Specialty --> Service: Specialty hoặc null
+        deactivate Specialty
+
+        alt Specialty không tồn tại
+            Service --> Controller: Error specialty not found
+            Controller --> UI: 400 Bad Request
+            UI --> Admin: Hiển thị lỗi\nspecialty không tồn tại
+            deactivate UI
+            deactivate Controller
+            deactivate Service
+        end
+    end
+
+    Service -> Service: checkDuplicateServiceIds(items)
+
+    alt Có serviceId trùng lặp
+        Service --> Controller: Error duplicate services
+        Controller --> UI: 400 Bad Request
+        UI --> Admin: Hiển thị lỗi\ndịch vụ trùng lặp trong gói
+        deactivate UI
+        deactivate Controller
+        deactivate Service
+    end
+
+    Service -> ServiceEntity: findMany(serviceIds)
+    activate ServiceEntity
+    ServiceEntity --> Service: Services array
+    deactivate ServiceEntity
+
+    Service -> Service: validateAllServiceIdsExist(services)
+
+    alt Có serviceId không tồn tại
+        Service --> Controller: Error service not found
+        Controller --> UI: 400 Bad Request
+        UI --> Admin: Hiển thị lỗi\ndịch vụ không tồn tại
+        deactivate UI
+        deactivate Controller
+        deactivate Service
+    end
+
+    Service -> Service: generateUniquePackageCode() -> packageCode
+
+    Service -> Package: create(packageCode, name, price,\ndescription, isActive, requiresDoctor,\ncategoryId, specialtyId)
+    activate Package
+    Package --> Service: Package created với id
+    deactivate Package
+
+    alt Có items
+        Service -> PackageItem: createMany(packageId, items)
+        activate PackageItem
+
+        alt Insert items thất bại
+            PackageItem --> Service: Error constraint violation
+            deactivate PackageItem
+
+            Service --> Controller: Error cannot create package
+            deactivate Service
+
+            Controller --> UI: 500 Internal Server Error
+            deactivate Controller
+
+            UI --> Admin: Hiển thị lỗi\nkhông thể tạo gói dịch vụ
+            deactivate UI
+        else Insert items thành công
+            PackageItem --> Service: PackageItems created
+            deactivate PackageItem
+
+            Service -> Package: findByIdWithRelations(id)
+            activate Package
+            Package --> Service: Package với category, specialty, items
+            deactivate Package
+
+            Service --> Controller: Package created
+            deactivate Service
+
+            Controller --> UI: 200 OK package data
+            deactivate Controller
+
+            UI --> Admin: Hiển thị thông báo\ntạo gói dịch vụ thành công\nvà thông tin gói mới\nvới danh sách dịch vụ
+            deactivate UI
+        end
+    else Không có items
+        Service -> Package: findByIdWithRelations(id)
+        activate Package
+        Package --> Service: Package với category, specialty
+        deactivate Package
+
+        Service --> Controller: Package created
+        deactivate Service
+
+        Controller --> UI: 200 OK package data
+        deactivate Controller
+
+        UI --> Admin: Hiển thị thông báo\ntạo gói dịch vụ thành công\nvà thông tin gói mới
+        deactivate UI
+    end
+end
+
+@enduml
+

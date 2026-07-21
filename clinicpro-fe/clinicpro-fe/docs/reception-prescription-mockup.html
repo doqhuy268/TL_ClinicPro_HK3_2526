@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mockup - Tạo phiếu chỉ định</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; }
+        .header { margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #ddd; }
+        .tab { padding: 10px 20px; background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab.active { border-bottom-color: #0066cc; color: #0066cc; }
+        .card { background: white; border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; }
+        .card-title { font-weight: bold; margin-bottom: 10px; }
+        .input { width: 100%; padding: 8px; border: 1px solid #ddd; margin-bottom: 10px; }
+        .btn { padding: 8px 16px; background: #0066cc; color: white; border: none; cursor: pointer; }
+        .btn-secondary { background: #666; }
+        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .service-item { padding: 10px; border: 1px solid #ddd; margin-bottom: 10px; }
+        .service-list { max-height: 300px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>Phiếu chỉ định</h1>
+            <p style="color: #666; font-size: 14px; margin-top: 5px;">Chọn hồ sơ bệnh nhân, dịch vụ và bác sĩ phụ trách</p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active">Tạo phiếu chỉ định</button>
+            <button class="tab">Danh sách phiếu chỉ định</button>
+        </div>
+
+        <!-- Tab Content: Tạo phiếu chỉ định -->
+        <div>
+            <!-- Tạo phiếu từ lịch hẹn -->
+            <div class="card">
+                <div class="card-title">Tạo phiếu chỉ định từ lịch hẹn</div>
+                <input type="text" class="input" placeholder="Mã lịch hẹn">
+                <button class="btn btn-secondary">Tra cứu</button>
+                <button class="btn">Tạo phiếu</button>
+            </div>
+
+            <!-- Chọn hồ sơ bệnh nhân -->
+            <div class="card">
+                <div class="card-title">Chọn hồ sơ bệnh nhân</div>
+                <input type="text" class="input" placeholder="Tìm hồ sơ bệnh nhân *">
+            </div>
+
+            <!-- Main Grid -->
+            <div class="grid">
+                <!-- Left Column -->
+                <div>
+                    <!-- Thông tin bệnh nhân -->
+                    <div class="card">
+                        <div class="card-title">Thông tin bệnh nhân</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div>
+                                <div style="font-weight: bold; margin-bottom: 5px;">Tên bệnh nhân</div>
+                                <div>Nguyễn Văn A</div>
+                            </div>
+                            <div>
+                                <div style="font-weight: bold; margin-bottom: 5px;">Mã hồ sơ</div>
+                                <div>PAT-20241103-001</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dịch vụ đã chọn -->
+                    <div class="card">
+                        <div class="card-title">Dịch vụ đã chọn (2)</div>
+                        <div class="service-item">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <div>
+                                    <strong>1. Khám tổng quát</strong>
+                                    <div style="font-size: 12px; color: #666;">SVC-001</div>
+                                </div>
+                                <button style="background: none; border: none; color: red; cursor: pointer;">X</button>
+                            </div>
+                            <select class="input" style="font-size: 12px;">
+                                <option>Bác sĩ phụ trách (tùy chọn)</option>
+                                <option>BS. Nguyễn Văn B</option>
+                            </select>
+                        </div>
+                        <div class="service-item">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <div>
+                                    <strong>2. Xét nghiệm máu</strong>
+                                    <div style="font-size: 12px; color: #666;">SVC-002</div>
+                                </div>
+                                <button style="background: none; border: none; color: red; cursor: pointer;">X</button>
+                            </div>
+                            <select class="input" style="font-size: 12px;">
+                                <option>Bác sĩ phụ trách (tùy chọn)</option>
+                                <option>BS. Trần Thị C</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column -->
+                <div>
+                    <!-- Tìm kiếm dịch vụ -->
+                    <div class="card">
+                        <div class="card-title">Tìm kiếm dịch vụ</div>
+                        <input type="text" class="input" placeholder="Tìm kiếm dịch vụ...">
+                        <div class="service-list">
+                            <div class="service-item" style="cursor: pointer;">
+                                <div style="font-weight: bold; margin-bottom: 5px;">Siêu âm bụng</div>
+                                <div style="font-size: 12px; color: #666;">SVC-003</div>
+                            </div>
+                            <div class="service-item" style="cursor: pointer;">
+                                <div style="font-weight: bold; margin-bottom: 5px;">Chụp X-quang ngực</div>
+                                <div style="font-size: 12px; color: #666;">SVC-004</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Nút tạo phiếu -->
+                    <div class="card">
+                        <button class="btn" style="width: 100%; background: #28a745;">Tạo phiếu chỉ định</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Content: Danh sách phiếu chỉ định -->
+        <div style="display: none;">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+                    <div class="card-title">Danh sách phiếu chỉ định</div>
+                    <button class="btn btn-secondary">Làm mới</button>
+                </div>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f5f5f5; border-bottom: 1px solid #ddd;">
+                            <th style="padding: 10px; text-align: left; font-size: 12px;">Mã</th>
+                            <th style="padding: 10px; text-align: left; font-size: 12px;">Bệnh nhân</th>
+                            <th style="padding: 10px; text-align: left; font-size: 12px;">Bác sĩ</th>
+                            <th style="padding: 10px; text-align: left; font-size: 12px;">Dịch vụ</th>
+                            <th style="padding: 10px; text-align: left; font-size: 12px;">Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 10px; font-size: 12px;">a7564794</td>
+                            <td style="padding: 10px; font-size: 12px;">Nguyễn Văn A</td>
+                            <td style="padding: 10px; font-size: 12px;">BS. Nguyễn Văn B</td>
+                            <td style="padding: 10px; font-size: 12px;">SVC-001, SVC-002</td>
+                            <td style="padding: 10px; font-size: 12px;">Đã tạo</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 10px; font-size: 12px;">b1234567</td>
+                            <td style="padding: 10px; font-size: 12px;">Trần Thị C</td>
+                            <td style="padding: 10px; font-size: 12px;">BS. Lê Văn D</td>
+                            <td style="padding: 10px; font-size: 12px;">SVC-003</td>
+                            <td style="padding: 10px; font-size: 12px;">Đang xử lý</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div style="display: flex; justify-content: space-between; margin-top: 15px;">
+                    <div style="font-size: 12px; color: #666;">Hiển thị 1 - 20 / 45</div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-secondary" style="padding: 5px 10px;">&lt;</button>
+                        <span style="font-size: 12px; padding: 5px;">Trang 1 / 3</span>
+                        <button class="btn btn-secondary" style="padding: 5px 10px;">&gt;</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

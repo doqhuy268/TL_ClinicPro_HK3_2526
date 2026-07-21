@@ -1,0 +1,293 @@
+Payment API Usage Guide
+=======================
+
+Summary
+-------
+The invoice payment APIs support both cash collection and PayOS transfer payments. Every route (except the public webhook) is guarded by `JwtAuthGuard` + `RolesGuard`. Remember the global prefix `/api` configured in `main.ts`.
+
+Notation
+--------
+- `uuid` – Prisma string IDs (UUID format).
+- `date-time` – ISO 8601 timestamp string.
+- `float` – decimal number serialized as JSON number.
+
+Endpoints and Payloads
+----------------------
+### 1. `POST /api/invoice-payments/scan`
+Role: `CASHIER`
+
+**Request body**
+```json
+{
+  "prescriptionCode": "PR-001"
+}
+```
+
+**Response**
+```json
+{
+  "id": "uuid",
+  "prescriptionCode": "PR-001",
+  "patientProfile": {
+    "id": "uuid",
+    "name": "Nguyen Van A",
+    "dateOfBirth": "date-time",
+    "gender": "MALE"
+  },
+  "doctor": {
+    "id": "uuid",
+    "doctorCode": "DOC-01",
+    "auth": { "name": "Dr. Smith" }
+  },
+  "services": [
+    {
+      "serviceId": "uuid",
+      "service": {
+        "id": "uuid",
+        "serviceCode": "SRV-001",
+        "name": "Khám tổng quát",
+        "price": 150000,
+        "description": "..."
+      },
+      "status": "PENDING",
+      "order": 1
+    }
+  ],
+  "note": "...",
+  "status": "PENDING"
+}
+```
+
+### 2. `POST /api/invoice-payments/preview`
+Roles: `CASHIER`, `RECEPTIONIST`
+
+**Request body**
+```json
+{
+  "prescriptionCode": "PR-001",
+  "selectedServiceIds": ["uuid"],
+  "selectedServiceCodes": ["SRV-001"]
+}
+```
+Both selection arrays are optional; when omitted all services are selected.
+
+**Response**
+```json
+{
+  "prescriptionDetails": { ...same structure as scan response... },
+  "selectedServices": [
+    {
+      "serviceId": "uuid",
+      "serviceCode": "SRV-001",
+      "name": "Khám tổng quát",
+      "price": 150000,
+      "description": "..."
+    }
+  ],
+  "totalAmount": 150000,
+  "patientName": "Nguyen Van A"
+}
+```
+
+### 3. `POST /api/invoice-payments/create`
+Role: `CASHIER`
+
+**Request body**
+```json
+{
+  "prescriptionCode": "PR-001",
+  "selectedServiceIds": ["uuid"],
+  "paymentMethod": "TRANSFER",
+  "cashierId": "uuid",          // optional when JWT already maps to cashier
+  "returnUrl": "https://app.example.com/pay/complete",
+  "cancelUrl": "https://app.example.com/pay/cancel"
+}
+```
+
+**Response**
+```json
+{
+  "invoiceCode": "INV-1709300000-XYZ123",
+  "totalAmount": 150000,
+  "paymentStatus": "PENDING",
+  "prescriptionId": "uuid",
+  "patientProfileId": "uuid",
+  "selectedServiceIds": ["uuid"],
+  "paymentMethod": "TRANSFER",
+  "transaction": {
+    "id": "uuid",
+    "status": "PENDING",
+    "amount": 150000,
+    "currency": "VND",
+    "paymentUrl": "https://payos.vn/...",
+    "qrCode": "data:image/png;base64,...",
+    "providerTransactionId": "123456789",
+    "orderCode": "INV-1709300000-XYZ123",
+    "expiredAt": "date-time",
+    "paidAt": null,
+    "isVerified": false
+  }
+}
+```
+If `paymentMethod` is `CASH`, `transaction` will be omitted.
+
+### 4. `POST /api/invoice-payments/confirm`
+Role: `CASHIER`
+
+**Request body (cash example)**
+```json
+{
+  "invoiceCode": "INV-1709300000-XYZ123",
+  "cashierId": "uuid"
+}
+```
+
+**Request body (transfer manual confirm)**
+```json
+{
+  "invoiceCode": "INV-1709300000-XYZ123",
+  "cashierId": "uuid",
+  "transactionId": "123456789"   // PayOS transaction id or internal id
+}
+```
+
+**Response**
+```json
+{
+  "invoiceCode": "INV-1709300000-XYZ123",
+  "totalAmount": 150000,
+  "paymentStatus": "PAID",
+  "prescriptionId": "uuid",
+  "patientProfileId": "uuid",
+  "selectedServiceIds": ["uuid"],
+  "paymentMethod": "CASH",
+  "transaction": null,
+  "routingAssignments": [
+    {
+      "roomId": "uuid",
+      "roomCode": "RM-01",
+      "roomName": "Phòng khám 1",
+      "specialtyName": "Nội tổng quát",
+      "boothId": null,
+      "boothCode": null,
+      "boothName": null,
+      "doctorId": "uuid",
+      "doctorCode": "DOC-01",
+      "doctorName": "Dr. Smith",
+      "technicianId": null,
+      "technicianCode": null,
+      "technicianName": null,
+      "nextAvailableAt": "date-time"
+    }
+  ],
+  "invoiceDetails": [
+    {
+      "serviceId": "uuid",
+      "serviceCode": "SRV-001",
+      "serviceName": "Khám tổng quát",
+      "price": 150000
+    }
+  ],
+  "patientInfo": {
+    "name": "Nguyen Van A",
+    "dateOfBirth": "date-time",
+    "gender": "MALE"
+  },
+  "prescriptionInfo": {
+    "prescriptionCode": "PR-001",
+    "status": "WAITING",
+    "doctorName": "Dr. Smith"
+  }
+}
+```
+
+### 5. `POST /api/invoice-payments/invoice/{invoiceCode}/refresh`
+Roles: `CASHIER`, `PATIENT`, `RECEPTIONIST`
+
+**Request body**
+```json
+{
+  "returnUrl": "https://app.example.com/pay/complete",
+  "cancelUrl": "https://app.example.com/pay/cancel"
+}
+```
+
+**Response** – identical shape to the `create` response with a new `transaction` object.
+
+### 6. `POST /api/invoice-payments/payos/webhook`
+Role: `Public`
+
+**Typical incoming payload from PayOS**
+```json
+{
+  "code": "00",
+  "desc": "Success",
+  "data": {
+    "id": "123456789",
+    "orderCode": "INV-1709300000-XYZ123",
+    "amount": 150000,
+    "currency": "VND",
+    "status": "PAID",
+    "paymentUrl": "https://payos.vn/...",
+    "qrCode": "...",
+    "paidAt": 1709301234,
+    "expiredAt": 1709304834
+  }
+}
+```
+
+**Response examples**
+- Missing signature (dashboard ping):
+  ```json
+  { "success": true, "status": "PENDING" }
+  ```
+- Verified payment success:
+  ```json
+  {
+    "success": true,
+    "status": "SUCCEEDED",
+    "invoiceCode": "INV-1709300000-XYZ123",
+    "data": { ...same as confirm response... }
+  }
+  ```
+
+Cash Workflow
+-------------
+1. Scan prescription (optional for validation).
+2. Preview services if needed.
+3. Create invoice with `paymentMethod: "CASH"`.
+4. Collect money and call `confirm`.
+5. System routes the patient and pushes events to Redis.
+
+Transfer Workflow
+-----------------
+1. Scan / preview as above.
+2. Create invoice with `paymentMethod: "TRANSFER"` to obtain `transaction.paymentUrl` and `transaction.qrCode`.
+3. Show QR/link to patient.
+4. Prefer webhook auto-confirmation; fallback to manual `confirm` if required.
+5. If payment link expires, call `refresh` to generate a new one.
+
+Webhook Notes
+-------------
+- Configure URL in PayOS dashboard: `https://<your-domain>/api/invoice-payments/payos/webhook`.
+- During integration PayOS may ping without signature; production should supply `x-payos-signature` or `x-signature` (HMAC SHA256 using `PAYOS_CHECKSUM_KEY`).
+- Webhook handling is idempotent: repeated `SUCCEEDED` messages detect already-paid invoices and simply acknowledge.
+
+Environment Variables
+---------------------
+- `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` – required credentials.
+- `PAYOS_RETURN_URL`, `PAYOS_CANCEL_URL` – default frontend URLs (optional, overridable per request).
+
+API Status Codes
+----------------
+- `200 OK` – Success responses for all routes.
+- `400 Bad Request` – Validation issues (invalid services, missing cashierId, etc.).
+- `401/403` – Authentication or role requirement failed.
+- `404 Not Found` – Unknown invoice/prescription/transaction.
+- `500` – Unexpected server / PayOS errors (check logs).
+
+Testing Tips
+------------
+- Expose localhost with ngrok so PayOS can reach your webhook.
+- Postman: include `Authorization` header and sample bodies above. For transfer flow, inspect the returned `paymentUrl` and confirm via webhook or manual confirm.
+- Ensure Prisma migrations run so the `payment_transactions` table exists before testing transfer payments.

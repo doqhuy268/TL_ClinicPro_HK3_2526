@@ -1,0 +1,84 @@
+@startuml Appointment Booking - Patient Sequence Diagram
+!theme plain
+
+actor "Patient" as P
+boundary "Frontend" as F
+control "AppointmentBookingController" as C
+control "AppointmentBookingService" as S
+entity "Appointment" as A
+entity "Doctor" as D
+entity "Specialty" as SP
+entity "Service" as SV
+
+
+P -> F: Search for specialty
+F -> C: GET /appointment-booking/specialties
+C -> C: validateRequest()
+C -> S: getSpecialties()
+S -> SP: findAllSpecialties()
+SP -> SP: prisma.specialty.findMany()
+SP --> S: specialties\n(all specialty records)
+S --> C: response\n(specialties array with id, name, description)
+C --> F: response\n(specialties list)
+F --> P: Display specialties list
+
+P -> F: Select specialty
+F -> C: GET /appointment-booking/doctors?specialtyId=xxx
+C -> C: validateSpecialtyId(specialtyId)
+C -> S: getDoctorsBySpecialty(specialtyId)
+S -> D: findDoctorsBySpecialty(specialtyId)
+D -> D: prisma.doctor.findMany()
+D --> S: doctors\n(doctors matching specialty with work sessions)
+S --> C: response\n(doctors array with specialty info)
+C --> F: response\n(doctors list with rating, experience)
+F --> P: Display doctors list
+
+P -> F: Select doctor and date
+F -> C: GET /appointment-booking/working-days?doctorId=xxx
+C -> C: validateDoctorId(doctorId)
+C -> S: getDoctorWorkingDays(doctorId)
+S -> D: getWorkSessionsByDoctor(doctorId)
+D -> D: prisma.workSession.findMany()
+D --> S: workSessions\n(approved and in-progress work sessions)
+S --> C: response\n(working days array for the month)
+C --> F: response\n(available dates list)
+F --> P: Display available working days
+
+P -> F: Select service and time slot
+F -> C: GET /appointment-booking/available-slots
+C -> C: validateAvailableSlotsDto(dto)
+C -> S: getAvailableSlots(dto)
+S -> A: calculateAvailableSlots(workSessions, serviceDuration)
+
+note over S: Calculate available slots:\n- Iterate work sessions\n- Generate time slots\n- Check conflicts
+
+A -> A: generateTimeSlots(workSessions)
+A -> A: filterAvailableSlots(slots, existingAppointments)
+A --> S: slots\n(available and booked time slots)
+S --> C: response\n(slots array with startTime, endTime, isAvailable)
+C --> F: response\n(available slots list)
+F --> P: Display available time slots
+
+P -> F: Submit booking information
+F -> C: POST /appointment-booking/book
+C -> C: validateBookAppointmentDto(dto)
+C -> S: bookAppointment(bookAppointmentDto, user)
+
+S -> A: checkSlotConflict(appointmentData)
+A -> A: prisma.appointment.findFirst()
+
+alt No conflict
+  S -> A: createAppointment(appointmentData)
+  A -> A: prisma.appointment.create()
+  A --> S: appointment\n(new appointment with code and details)
+  S --> C: response\n(appointment with booking confirmation)
+  C --> F: response\n(created appointment details)
+  F --> P: Display booking success with code
+  
+else Conflict
+  S --> C: throw ConflictException()
+  C --> F: error\n(time slot not available message)
+  F --> P: Display conflict message
+end
+
+@enduml

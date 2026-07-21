@@ -1,0 +1,60 @@
+import {
+  IsOptional,
+  IsString,
+  IsDateString,
+  IsEnum,
+  IsObject,
+  IsBoolean,
+} from 'class-validator';
+
+export enum GenderEnum {
+  MALE = 'male',
+  FEMALE = 'female',
+  OTHER = 'other',
+}
+
+export class UpdatePatientProfileDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string; // Thêm phone number
+
+  @IsOptional()
+  @IsDateString()
+  dateOfBirth?: string;
+
+  @IsOptional()
+  @IsEnum(GenderEnum)
+  gender?: GenderEnum;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  occupation?: string;
+
+  @IsOptional()
+  @IsObject()
+  emergencyContact?: object;
+
+  @IsOptional()
+  @IsString()
+  healthInsurance?: string;
+
+  @IsOptional()
+  @IsString()
+  relationship?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isPregnant?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isDisabled?: boolean;
+}
